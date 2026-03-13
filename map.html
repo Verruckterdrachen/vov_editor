@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Карта ВОВ</title>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#1a1a2e; overflow:hidden; }
+  #map { width:100%; height:100%; }
+
+  /* Курсор-ластик */
+  #eraser-cursor {
+    position:fixed; border:2px solid rgba(255,100,100,0.9);
+    border-radius:50%; pointer-events:none; display:none;
+    transform:translate(-50%,-50%); z-index:9999;
+    background:rgba(255,100,100,0.15);
+  }
+
+  /* Подсказка при наведении на объект */
+  .obj-tooltip { background:#222; color:#eee; border:1px solid #555;
+                  font-size:11px; padding:2px 6px; border-radius:3px; }
+
+  /* Стиль выделенного объекта Leaflet */
+  .selected-path { filter: drop-shadow(0 0 6px #00aaff); }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="eraser-cursor"></div>
+
+<!-- JS-библиотеки -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//   ГЛОБАЛЬНОЕ СОСТОЯНИЕ
+// ═══════════════════════════════════════════════════════════
+var map;
+var bridge = null;       // QWebChannel bridge
+var activeTool   = 'select';
+var activeLayerId = null;
+
+// Настройки инструментов
+var brushColor   = '#ff0000';
+var brushSize    = 4;
+var eraserSize   = 20;
+var fontSize     = 14;
+var fontColor    = '#ffffff';
+var fontBold     = false;
+var fontItalic   = false;
+
+// Данные слоёв: { id -> { name, visible, group:LayerGroup, objects:[] } }
+var layers = {};
+var layerOrder = [];   // порядок id слоёв
+
+// История для Ctrl+Z
+var history = [];
+var MAX_HISTORY = 50;
+
+// Выделенный объект
+var selectedObj  = null;
+
+// Рисование кистью
+var isDrawing    = false;
+var currentPath  = null;   // массив latlng для текущей линии
+var currentPolyline = null;
+
+// Ластик
+var isErasing       = false;
+var eraserPath      = [];
+var eraserCursorEl  = document.getElementById('eraser-cursor');
+
+// Тайловый слой
+var tileLayer = null;
+var currentTileType = 'map';
+var yandexApiKey    = '';
+
+// ═══════════════════════════════════════════════════════════
+//   ИНИЦИАЛИЗАЦИЯ
+// ═══════════════════════════════════════════════════════════
+function initMap(apiKey) {
+  yandexApiKey = apiKey || '';
+
+  if (map) {
+    // Перезаписываем ключ и перезагружаем тайлы
+    changeTileLayer(currentTileType, yandexApiKey);
+    return;
+  }
+
+  // Центр — Москва (начало ВОВ)
+  map = L.map('map', {
+    center: [55.0, 32.0],
+    zoom: 5,
+    zoomControl: true,
+    preferCanvas: false
+  });
+
+  // Тёмный фон пока тайлы не загружены
+  map.getContainer().style.background = '#1a1a2e';
+
+  changeTileLayer('map', yandexApiKey);
+
+  // Слушатели событий карты
+  map.on('mousedown', onMapMouseDown);
+  map.on('mousemove', onMapMouseMove);
+  map.on('mouseup',   onMapMouseUp);
+
+  // Создаём слой по умолчанию
+  createLayer('layer_default', 'Слой 1');
+  setActiveLayer('layer_default');
+
+  // Инициализируем QWebChannel
+  new QWebChannel(qt.webChannelTransport, function(channel) {
+    bridge = channel.objects.bridge;
+    bridge.onStatus('Карта готова');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ТАЙЛОВЫЕ СЛОИ ЯНДЕКСА
+// ═══════════════════════════════════════════════════════════
+function changeTileLayer(type, apiKey) {
+  currentTileType = type;
+  if (apiKey) yandexApiKey = apiKey;
+
+  if (tileLayer) map.removeLayer(tileLayer);
+
+  var urlTemplates = {
+    'map': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=map&x={x}&y={y}&z={z}&lang=ru_RU',
+    'sat': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=sat&x={x}&y={y}&z={z}&lang=ru_RU',
+    'skl': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=sat,skl&x={x}&y={y}&z={z}&lang=ru_RU'
+  };
+
+  var tmpl = urlTemplates[type] || urlTemplates['map'];
+
+  if (yandexApiKey) {
+    // Яндекс-тайлы
+    tileLayer = L.tileLayer(tmpl.replace('{key}', yandexApiKey), {
+      attribution: '© Яндекс',
+      maxZoom: 18,
+      tileSize: 256
+    });
+  } else {
+    // Fallback: OpenStreetMap
+    tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19
+    });
+  }
+  tileLayer.addTo(map);
+}
+
+// ═══════════════════════════════════════════════════════════
+//   УПРАВЛЕНИЕ СЛОЯМИ
+// ═══════════════════════════════════════════════════════════
+function createLayer(id, name) {
+  var lg = L.layerGroup().addTo(map);
+  layers[id] = { name:name, visible:true, group:lg, objects:[] };
+  layerOrder.push(id);
+}
+
+function addLayerGroup(id, name) {
+  // Группа — только UI-контейнер, не Leaflet-объект
+  layers[id] = { name:name, visible:true, group:null, objects:[], isGroup:true };
+  layerOrder.push(id);
+}
+
+function addLayer(id, name) {
+  createLayer(id, name);
+  setActiveLayer(id);
+}
+
+function removeLayer(id) {
+  if (!layers[id]) return;
+  if (layers[id].group) {
+    layers[id].group.clearLayers();
+    map.removeLayer(layers[id].group);
+  }
+  delete layers[id];
+  layerOrder = layerOrder.filter(function(x){ return x !== id; });
+  if (activeLayerId === id) activeLayerId = layerOrder[layerOrder.length-1] || null;
+}
+
+function setLayerVisible(id, visible) {
+  if (!layers[id]) return;
+  layers[id].visible = visible;
+  if (layers[id].group) {
+    if (visible) map.addLayer(layers[id].group);
+    else         map.removeLayer(layers[id].group);
+  }
+}
+
+function setActiveLayer(id) {
+  activeLayerId = id;
+}
+
+function renameLayer(id, name) {
+  if (layers[id]) layers[id].name = name;
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ИНСТРУМЕНТЫ
+// ═══════════════════════════════════════════════════════════
+function setTool(params) {
+  activeTool = params.tool;
+  if (params.color)      brushColor  = params.color;
+  if (params.size)       brushSize   = params.size;
+  if (params.eraserSize) eraserSize  = params.eraserSize;
+  if (params.fontSize)   fontSize    = params.fontSize;
+  if (params.fontColor)  fontColor   = params.fontColor;
+  if (typeof params.fontBold   !== 'undefined') fontBold   = params.fontBold;
+  if (typeof params.fontItalic !== 'undefined') fontItalic = params.fontItalic;
+
+  // Управление курсором и drag
+  if (activeTool === 'select' || activeTool === 'text') {
+    map.dragging.enable();
+    eraserCursorEl.style.display = 'none';
+  } else if (activeTool === 'brush' || activeTool === 'eraser') {
+    map.dragging.disable();
+    if (activeTool === 'eraser') updateEraserCursor();
+    else eraserCursorEl.style.display = 'none';
+  }
+
+  // Убираем выделение при смене инструмента
+  if (activeTool !== 'select') deselectAll();
+}
+
+function setBrushColor(c)  { brushColor  = c; }
+function setBrushSize(s)   { brushSize   = s; }
+function setEraserSize(s)  { eraserSize  = s; updateEraserCursor(); }
+function setFontSize(s)    { fontSize    = s; }
+function setFontColor(c)   { fontColor   = c; }
+function setFontBold(b)    { fontBold    = b; }
+function setFontItalic(i)  { fontItalic  = i; }
+
+function updateEraserCursor() {
+  var px = eraserSize * 2;  // диаметр в пикселях (приближённо)
+  eraserCursorEl.style.width  = px + 'px';
+  eraserCursorEl.style.height = px + 'px';
+}
+
+// ═══════════════════════════════════════════════════════════
+//   СОБЫТИЯ МЫШИ НА КАРТЕ
+// ═══════════════════════════════════════════════════════════
+function onMapMouseDown(e) {
+  if (!activeLayerId || layers[activeLayerId] && layers[activeLayerId].isGroup) return;
+
+  if (activeTool === 'brush') {
+    startDrawing(e.latlng);
+  } else if (activeTool === 'eraser') {
+    isErasing = true;
+    eraserPath = [e.latlng];
+  } else if (activeTool === 'text') {
+    placeText(e.latlng);
+  }
+}
+
+function onMapMouseMove(e) {
+  if (activeTool === 'eraser') {
+    // Позиция курсора-ластика
+    var cp = e.containerPoint;
+    eraserCursorEl.style.left    = cp.x + 'px';
+    eraserCursorEl.style.top     = cp.y + 'px';
+    eraserCursorEl.style.display = 'block';
+
+    if (isErasing) {
+      eraserPath.push(e.latlng);
+    }
+  }
+
+  if (activeTool === 'brush' && isDrawing) {
+    continueDrawing(e.latlng);
+  }
+}
+
+function onMapMouseUp(e) {
+  if (activeTool === 'brush' && isDrawing) {
+    finishDrawing();
+  }
+  if (activeTool === 'eraser' && isErasing) {
+    applyEraser(e.originalEvent && e.originalEvent.shiftKey);
+    isErasing  = false;
+    eraserPath = [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//   РИСОВАНИЕ КИСТЬЮ
+// ═══════════════════════════════════════════════════════════
+function startDrawing(latlng) {
+  isDrawing   = true;
+  currentPath = [latlng];
+  currentPolyline = L.polyline([latlng], {
+    color:  brushColor,
+    weight: brushSize,
+    opacity: 0.95,
+    smoothFactor: 1,
+    lineCap:  'round',
+    lineJoin: 'round'
+  });
+  // Добавляем на активный слой
+  layers[activeLayerId].group.addLayer(currentPolyline);
+  makeObjectInteractive(currentPolyline, activeLayerId);
+}
+
+function continueDrawing(latlng) {
+  currentPath.push(latlng);
+  currentPolyline.setLatLngs(currentPath);
+}
+
+function finishDrawing() {
+  isDrawing = false;
+  if (!currentPolyline || currentPath.length < 2) {
+    if (currentPolyline) layers[activeLayerId].group.removeLayer(currentPolyline);
+    currentPolyline = null;
+    currentPath     = [];
+    return;
+  }
+  var obj = {
+    id:    'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
+    type:  'polyline',
+    latlngs: currentPath.map(function(ll){ return [ll.lat, ll.lng]; }),
+    color: brushColor,
+    weight:brushSize,
+    layerId: activeLayerId,
+    leafletObj: currentPolyline
+  };
+  layers[activeLayerId].objects.push(obj);
+  pushHistory({action:'add', obj:obj});
+
+  currentPolyline = null;
+  currentPath     = [];
+
+  notifyStatus('Линия нарисована');
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ЛАСТИК
+// ═══════════════════════════════════════════════════════════
+function applyEraser(allLayers) {
+  if (eraserPath.length < 2) return;
+
+  // Строим буфер ластика как polygon из пути
+  var eraserCoords = eraserPath.map(function(ll){ return [ll.lng, ll.lat]; });
+  // Замыкаем
+  eraserCoords.push(eraserCoords[0]);
+
+  var eraserPoly;
+  try {
+    // Буфер (расширяем путь на радиус ластика в метрах)
+    var eraserLine = turf.lineString(eraserPath.map(function(ll){ return [ll.lng, ll.lat]; }));
+    var radiusKm   = map.distance(eraserPath[0], eraserPath[Math.floor(eraserPath.length/2)]) / 1000;
+    var bufRadius  = eraserSize * 0.0001;  // грубое приближение
+    eraserPoly = turf.buffer(eraserLine, bufRadius, {units:'degrees'});
+  } catch(ex) {
+    // Fallback: простой bbox
+    var bounds = L.latLngBounds(eraserPath);
+    var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+    eraserPoly = turf.bboxPolygon([sw.lng, sw.lat, ne.lng, ne.lat]);
+  }
+
+  var targetLayerIds = allLayers ? Object.keys(layers) : [activeLayerId];
+
+  targetLayerIds.forEach(function(lid) {
+    if (!layers[lid] || !layers[lid].group) return;
+    var toRemove = [];
+    var toAdd    = [];
+
+    layers[lid].objects.forEach(function(obj) {
+      if (obj.type === 'polyline') {
+        var line = turf.lineString(obj.latlngs.map(function(ll){ return [ll[1], ll[0]]; }));
+        try {
+          // Разрезаем линию по зоне ластика
+          var split = turf.lineSplit(line, eraserPoly);
+          // Оставляем только части вне ластика
+          var outside = [];
+          if (split && split.features && split.features.length > 0) {
+            split.features.forEach(function(seg) {
+              var mid = turf.midpoint(
+                turf.point(seg.geometry.coordinates[0]),
+                turf.point(seg.geometry.coordinates[seg.geometry.coordinates.length-1])
+              );
+              if (!turf.booleanPointInPolygon(mid, eraserPoly)) {
+                outside.push(seg);
+              }
+            });
+          }
+
+          // Убираем оригинал
+          layers[lid].group.removeLayer(obj.leafletObj);
+          toRemove.push(obj);
+
+          // Добавляем оставшиеся части
+          outside.forEach(function(seg) {
+            var coords = seg.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
+            if (coords.length < 2) return;
+            var pl = L.polyline(coords, {
+              color:  obj.color,
+              weight: obj.weight,
+              opacity:0.95, lineCap:'round', lineJoin:'round'
+            });
+            layers[lid].group.addLayer(pl);
+            var newObj = {
+              id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
+              type: 'polyline',
+              latlngs: coords,
+              color:  obj.color,
+              weight: obj.weight,
+              layerId:lid,
+              leafletObj: pl
+            };
+            makeObjectInteractive(pl, lid);
+            toAdd.push(newObj);
+          });
+        } catch(ex2) {
+          // Если turf не смог — просто удаляем линию, если она пересекается
+          var intersects = false;
+          obj.latlngs.forEach(function(ll) {
+            var pt = turf.point([ll[1], ll[0]]);
+            if (turf.booleanPointInPolygon(pt, eraserPoly)) intersects = true;
+          });
+          if (intersects) {
+            layers[lid].group.removeLayer(obj.leafletObj);
+            toRemove.push(obj);
+          }
+        }
+      } else if (obj.type === 'text' || obj.type === 'image') {
+        // Удаляем если центр в зоне ластика
+        if (obj.latlng) {
+          var pt = turf.point([obj.latlng[1], obj.latlng[0]]);
+          if (turf.booleanPointInPolygon(pt, eraserPoly)) {
+            if (obj.leafletObj) layers[lid].group.removeLayer(obj.leafletObj);
+            toRemove.push(obj);
+          }
+        }
+      }
+    });
+
+    // Применяем изменения
+    toRemove.forEach(function(o) {
+      layers[lid].objects = layers[lid].objects.filter(function(x){ return x !== o; });
+    });
+    toAdd.forEach(function(o) {
+      layers[lid].objects.push(o);
+    });
+  });
+
+  notifyStatus('Ластик применён');
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ТЕКСТ
+// ═══════════════════════════════════════════════════════════
+function placeText(latlng) {
+  var text = prompt('Введите текст подписи:');
+  if (!text) return;
+
+  var weight = fontBold   ? 'bold'   : 'normal';
+  var style  = fontItalic ? 'italic' : 'normal';
+  var css    = style + ' ' + weight + ' ' + fontSize + 'px Segoe UI, Arial, sans-serif';
+
+  var icon = L.divIcon({
+    className: '',
+    html: '<div style="font:' + css + ';color:' + fontColor +
+          ';white-space:nowrap;text-shadow:1px 1px 3px #000,0 0 6px #000;' +
+          'cursor:move;user-select:none;" ondblclick="editText(this)">' +
+          escapeHtml(text) + '</div>',
+    iconAnchor: [0, 0]
+  });
+
+  var marker = L.marker(latlng, { icon:icon, draggable:true });
+  layers[activeLayerId].group.addLayer(marker);
+
+  var obj = {
+    id:     'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
+    type:   'text',
+    text:   text,
+    latlng: [latlng.lat, latlng.lng],
+    fontSize: fontSize,
+    fontColor:fontColor,
+    fontBold: fontBold,
+    fontItalic:fontItalic,
+    layerId:   activeLayerId,
+    leafletObj:marker
+  };
+
+  // Обновляем координаты при перетаскивании
+  marker.on('dragend', function(ev) {
+    var ll = ev.target.getLatLng();
+    obj.latlng = [ll.lat, ll.lng];
+  });
+
+  // Клик → выделить
+  marker.on('click', function(ev) {
+    L.DomEvent.stopPropagation(ev);
+    selectObject(obj);
+  });
+
+  layers[activeLayerId].objects.push(obj);
+  pushHistory({action:'add', obj:obj});
+  notifyStatus('Текст добавлен');
+}
+
+function editText(el) {
+  var newText = prompt('Редактировать текст:', el.innerText);
+  if (newText !== null) el.innerText = newText;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ИМПОРТ ИЗОБРАЖЕНИЙ
+// ═══════════════════════════════════════════════════════════
+function importImage(fileUrl) {
+  var center   = map.getCenter();
+  var bounds   = map.getBounds();
+  var latRange = (bounds.getNorth() - bounds.getSouth()) * 0.3;
+  var lngRange = (bounds.getEast()  - bounds.getWest())  * 0.3;
+
+  var imgBounds = [
+    [center.lat - latRange, center.lng - lngRange],
+    [center.lat + latRange, center.lng + lngRange]
+  ];
+
+  var overlay = L.imageOverlay(fileUrl, imgBounds, { opacity:0.8, interactive:true });
+  layers[activeLayerId].group.addLayer(overlay);
+
+  var obj = {
+    id:     'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
+    type:   'image',
+    url:    fileUrl,
+    latlng: [center.lat, center.lng],
+    bounds: imgBounds,
+    opacity:0.8,
+    layerId:   activeLayerId,
+    leafletObj:overlay
+  };
+
+  overlay.on('click', function(ev) {
+    L.DomEvent.stopPropagation(ev);
+    selectObject(obj);
+  });
+
+  layers[activeLayerId].objects.push(obj);
+  pushHistory({action:'add', obj:obj});
+  notifyStatus('Изображение импортировано. Используйте инструмент Выбор для перемещения.');
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ВЫБОР И ПЕРЕМЕЩЕНИЕ ОБЪЕКТОВ
+// ═══════════════════════════════════════════════════════════
+function makeObjectInteractive(leafletObj, layerId) {
+  leafletObj.on('click', function(ev) {
+    if (activeTool !== 'select') return;
+    L.DomEvent.stopPropagation(ev);
+    // Найти obj по leafletObj
+    if (!layers[layerId]) return;
+    var found = layers[layerId].objects.filter(function(o){ return o.leafletObj === leafletObj; })[0];
+    if (found) selectObject(found);
+  });
+}
+
+function selectObject(obj) {
+  deselectAll();
+  selectedObj = obj;
+  if (obj.leafletObj) {
+    if (obj.leafletObj.setStyle) {
+      obj.leafletObj.setStyle({ color:'#00aaff', weight: (obj.weight||4)+2 });
+    }
+    if (obj.leafletObj._icon) {
+      obj.leafletObj._icon.style.outline = '2px solid #00aaff';
+    }
+  }
+  notifyStatus('Объект выбран: ' + obj.type);
+}
+
+function deselectAll() {
+  if (!selectedObj) return;
+  if (selectedObj.leafletObj) {
+    if (selectedObj.leafletObj.setStyle) {
+      selectedObj.leafletObj.setStyle({
+        color:  selectedObj.color  || brushColor,
+        weight: selectedObj.weight || brushSize
+      });
+    }
+    if (selectedObj.leafletObj._icon) {
+      selectedObj.leafletObj._icon.style.outline = '';
+    }
+  }
+  selectedObj = null;
+}
+
+function deleteSelected() {
+  if (!selectedObj) return;
+  var lid = selectedObj.layerId;
+  if (layers[lid]) {
+    layers[lid].group.removeLayer(selectedObj.leafletObj);
+    layers[lid].objects = layers[lid].objects.filter(function(o){ return o !== selectedObj; });
+  }
+  pushHistory({action:'delete', obj:selectedObj});
+  selectedObj = null;
+  notifyStatus('Объект удалён');
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ИСТОРИЯ (Ctrl+Z)
+// ═══════════════════════════════════════════════════════════
+function pushHistory(record) {
+  history.push(record);
+  if (history.length > MAX_HISTORY) history.shift();
+}
+
+function undoAction() {
+  if (history.length === 0) { notifyStatus('Нечего отменять'); return; }
+  var rec = history.pop();
+  if (rec.action === 'add') {
+    var obj = rec.obj;
+    if (layers[obj.layerId]) {
+      layers[obj.layerId].group.removeLayer(obj.leafletObj);
+      layers[obj.layerId].objects = layers[obj.layerId].objects.filter(function(o){ return o !== obj; });
+    }
+  } else if (rec.action === 'delete') {
+    var obj = rec.obj;
+    if (layers[obj.layerId] && obj.leafletObj) {
+      layers[obj.layerId].group.addLayer(obj.leafletObj);
+      layers[obj.layerId].objects.push(obj);
+    }
+  }
+  notifyStatus('Отменено');
+}
+
+// ═══════════════════════════════════════════════════════════
+//   СОХРАНЕНИЕ / ЗАГРУЗКА ПРОЕКТА
+// ═══════════════════════════════════════════════════════════
+function saveProject(path) {
+  var data = {
+    version: '1.0',
+    center:  [map.getCenter().lat, map.getCenter().lng],
+    zoom:    map.getZoom(),
+    tileType: currentTileType,
+    activeLayerId: activeLayerId,
+    layers: layerOrder.map(function(lid) {
+      var lyr = layers[lid];
+      return {
+        id:      lid,
+        name:    lyr.name,
+        visible: lyr.visible,
+        isGroup: lyr.isGroup || false,
+        objects: (lyr.objects || []).map(serializeObject)
+      };
+    })
+  };
+  if (bridge) bridge.saveProjectData(JSON.stringify(data, null, 2));
+}
+
+function serializeObject(obj) {
+  var s = { id:obj.id, type:obj.type, layerId:obj.layerId };
+  if (obj.type === 'polyline') {
+    s.latlngs = obj.latlngs;
+    s.color   = obj.color;
+    s.weight  = obj.weight;
+  } else if (obj.type === 'text') {
+    s.text      = obj.text;
+    s.latlng    = obj.latlng;
+    s.fontSize  = obj.fontSize;
+    s.fontColor = obj.fontColor;
+    s.fontBold  = obj.fontBold;
+    s.fontItalic= obj.fontItalic;
+  } else if (obj.type === 'image') {
+    s.url    = obj.url;
+    s.bounds = obj.bounds;
+    s.opacity= obj.opacity;
+    s.latlng = obj.latlng;
+  }
+  return s;
+}
+
+function loadProject(jsonStr) {
+  var data;
+  try { data = JSON.parse(jsonStr); } catch(ex) {
+    if (bridge) bridge.onError('Невозможно разобрать файл проекта: ' + ex.message);
+    return;
+  }
+
+  // Очищаем текущее состояние
+  Object.keys(layers).forEach(function(lid) {
+    if (layers[lid].group) { layers[lid].group.clearLayers(); map.removeLayer(layers[lid].group); }
+  });
+  layers    = {};
+  layerOrder= [];
+  history   = [];
+
+  if (data.center) map.setView(data.center, data.zoom || 5);
+  if (data.tileType) changeTileLayer(data.tileType, yandexApiKey);
+
+  // Восстанавливаем слои
+  (data.layers || []).forEach(function(lyr) {
+    if (lyr.isGroup) {
+      layers[lyr.id] = { name:lyr.name, visible:lyr.visible, group:null, objects:[], isGroup:true };
+    } else {
+      var lg = L.layerGroup();
+      if (lyr.visible) lg.addTo(map);
+      layers[lyr.id] = { name:lyr.name, visible:lyr.visible, group:lg, objects:[] };
+    }
+    layerOrder.push(lyr.id);
+
+    // Восстанавливаем объекты
+    (lyr.objects || []).forEach(function(obj) {
+      restoreObject(obj, lyr.id);
+    });
+  });
+
+  if (data.activeLayerId && layers[data.activeLayerId]) {
+    setActiveLayer(data.activeLayerId);
+  }
+
+  // Отправляем дерево слоёв в Qt
+  sendLayersToQt();
+  notifyStatus('Проект загружен');
+}
+
+function restoreObject(obj, layerId) {
+  var lyr = layers[layerId];
+  if (!lyr || !lyr.group) return;
+
+  if (obj.type === 'polyline') {
+    var pl = L.polyline(obj.latlngs, {
+      color:obj.color, weight:obj.weight,
+      opacity:0.95, lineCap:'round', lineJoin:'round'
+    });
+    lyr.group.addLayer(pl);
+    var restored = Object.assign({}, obj, { leafletObj:pl });
+    makeObjectInteractive(pl, layerId);
+    lyr.objects.push(restored);
+  } else if (obj.type === 'text') {
+    var ll = L.latLng(obj.latlng[0], obj.latlng[1]);
+    var weight = obj.fontBold   ? 'bold'   : 'normal';
+    var style  = obj.fontItalic ? 'italic' : 'normal';
+    var css    = style + ' ' + weight + ' ' + obj.fontSize + 'px Segoe UI,Arial';
+    var icon = L.divIcon({
+      className:'',
+      html: '<div style="font:' + css + ';color:' + obj.fontColor +
+            ';white-space:nowrap;text-shadow:1px 1px 3px #000;cursor:move;">' +
+            escapeHtml(obj.text) + '</div>',
+      iconAnchor:[0,0]
+    });
+    var marker = L.marker(ll, {icon:icon, draggable:true});
+    lyr.group.addLayer(marker);
+    var rObj = Object.assign({}, obj, { leafletObj:marker });
+    marker.on('dragend', function(ev) {
+      var ll2 = ev.target.getLatLng();
+      rObj.latlng = [ll2.lat, ll2.lng];
+    });
+    marker.on('click', function(ev) { L.DomEvent.stopPropagation(ev); selectObject(rObj); });
+    lyr.objects.push(rObj);
+  } else if (obj.type === 'image') {
+    var overlay = L.imageOverlay(obj.url, obj.bounds, {opacity:obj.opacity||0.8, interactive:true});
+    lyr.group.addLayer(overlay);
+    var iObj = Object.assign({}, obj, { leafletObj:overlay });
+    overlay.on('click', function(ev) { L.DomEvent.stopPropagation(ev); selectObject(iObj); });
+    lyr.objects.push(iObj);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ЭКСПОРТ PNG (через leaflet-easyprint или html2canvas fallback)
+// ═══════════════════════════════════════════════════════════
+function exportPNG(path) {
+  // Используем встроенный скриншот через QWebEnginePage (вызываем из Python)
+  if (bridge) bridge.onStatus('Экспорт: используйте Ctrl+E из меню Python');
+  notifyStatus('Для экспорта PNG используйте кнопку "Экспорт" сверху');
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ПЕРЕДАЧА ДЕРЕВА СЛОЁВ В Qt
+// ═══════════════════════════════════════════════════════════
+function sendLayersToQt() {
+  if (!bridge) return;
+  // Строим плоский список групп (верхний уровень)
+  var result = [];
+  layerOrder.forEach(function(lid) {
+    var lyr = layers[lid];
+    if (lyr.isGroup) {
+      result.push({ id:lid, name:lyr.name, children:[] });
+    } else {
+      // Добавляем к последней группе или в корень
+      var grp = result[result.length-1];
+      if (grp && grp.children) grp.children.push({ id:lid, name:lyr.name });
+      else result.push({ id:lid, name:lyr.name, children:[] });
+    }
+  });
+  bridge.onLayersData(JSON.stringify(result));
+}
+
+// ═══════════════════════════════════════════════════════════
+//   ВСПОМОГАТЕЛЬНЫЕ
+// ═══════════════════════════════════════════════════════════
+function notifyStatus(msg) {
+  if (bridge) bridge.onStatus(msg);
+}
+
+// Скрываем курсор-ластик когда мышь покидает карту
+document.addEventListener('mouseleave', function() {
+  eraserCursorEl.style.display = 'none';
+});
+</script>
+</body>
+</html>
