@@ -8,6 +8,7 @@
 import sys
 import os
 import json
+import uuid
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -316,7 +317,8 @@ class MainWindow(QMainWindow):
             self.status_lbl.setText("Ошибка загрузки карты!")
             return
         api_key = self.config.get("yandex_api_key", "")
-        self._js(f'initMap("{api_key}");')
+        # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
+        self._js(f'initMap({json.dumps(api_key)});')
         self.status_lbl.setText("Карта загружена")
 
     def _set_tool(self, tool: str):
@@ -343,15 +345,17 @@ class MainWindow(QMainWindow):
     def _add_group(self):
         name, ok = QInputDialog.getText(self, "Новая группа", "Название группы:")
         if not ok or not name: return
-        lid = f"group_{id(name)}"
+        # FIX #1: стабильный UUID вместо id(name)
+        lid = f"group_{uuid.uuid4().hex[:8]}"
         item = LayerItem(lid, name, is_group=True)
         self.layer_tree.addTopLevelItem(item)
-        self._js(f'addLayerGroup("{lid}", "{name}");')
+        self._js(f'addLayerGroup("{lid}", {json.dumps(name)});')
 
     def _add_layer(self):
         name, ok = QInputDialog.getText(self, "Новый слой", "Название слоя:")
         if not ok or not name: return
-        lid = f"layer_{id(name)}"
+        # FIX #1: стабильный UUID вместо id(name)
+        lid = f"layer_{uuid.uuid4().hex[:8]}"
         item = LayerItem(lid, name)
         selected = self.layer_tree.currentItem()
         if selected and isinstance(selected, LayerItem) and selected.is_group:
@@ -360,7 +364,7 @@ class MainWindow(QMainWindow):
         else:
             self.layer_tree.addTopLevelItem(item)
         self._activate_layer(item)
-        self._js(f'addLayer("{lid}", "{name}");')
+        self._js(f'addLayer("{lid}", {json.dumps(name)});')
 
     def _delete_layer(self):
         item = self.layer_tree.currentItem()
@@ -385,7 +389,7 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:", text=item.text(0))
         if ok and name:
             item.setText(0, name)
-            self._js(f'renameLayer("{item.layer_id}", "{name}");')
+            self._js(f'renameLayer("{item.layer_id}", {json.dumps(name)});')
 
     def _activate_layer(self, item: LayerItem):
         self._active_layer_id = item.layer_id
@@ -446,7 +450,8 @@ class MainWindow(QMainWindow):
     def _change_tile_layer(self, idx):
         types = ["map", "sat", "skl"]
         key = self.config.get("yandex_api_key", "")
-        self._js(f'changeTileLayer("{types[idx]}", "{key}");')
+        # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
+        self._js(f'changeTileLayer("{types[idx]}", {json.dumps(key)});')
 
     def _import_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -500,7 +505,8 @@ class MainWindow(QMainWindow):
             key = dlg.get_key()
             self.config["yandex_api_key"] = key
             save_config(self.config)
-            self._js(f'initMap("{key}");')
+            # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
+            self._js(f'initMap({json.dumps(key)});')
 
     def _js(self, code: str):
         self.webview.page().runJavaScript(code)
