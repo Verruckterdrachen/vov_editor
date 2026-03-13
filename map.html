@@ -27,6 +27,16 @@
 
   /* Стиль выделенного объекта Leaflet */
   .selected-path { filter: drop-shadow(0 0 6px #00aaff); }
+
+  /* FIX #3: центрированный текст-маркер */
+  .text-marker-wrap {
+    white-space:nowrap;
+    text-shadow:1px 1px 3px #000, 0 0 6px #000;
+    cursor:move;
+    user-select:none;
+    transform: translate(-50%, -50%);
+    display: inline-block;
+  }
 </style>
 </head>
 <body>
@@ -48,6 +58,9 @@ var map;
 var bridge = null;       // QWebChannel bridge
 var activeTool   = 'select';
 var activeLayerId = null;
+
+// Путь для сохранения (передаётся из Python перед Ctrl+S)
+var currentProjectPath = '';
 
 // Настройки инструментов
 var brushColor   = '#ff0000';
@@ -85,18 +98,45 @@ var currentTileType = 'map';
 var yandexApiKey    = '';
 
 // ═══════════════════════════════════════════════════════════
+//   FIX #7: Горячие клавиши Ctrl+S / Ctrl+Z прямо в JS
+//   (QWebEngineView перехватывает фокус — Qt shortcuts не срабатывают)
+// ═══════════════════════════════════════════════════════════
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 's') {
+    e.preventDefault();
+    if (currentProjectPath) {
+      saveProject(currentProjectPath);
+    } else {
+      // Сообщаем Python открыть диалог сохранения
+      if (bridge) bridge.onStatus('__SAVE_DIALOG__');
+    }
+  }
+  if (e.ctrlKey && e.key === 'z') {
+    e.preventDefault();
+    undoAction();
+  }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    // Backspace тоже удаляет выделенный объект
+    deleteSelected();
+  }
+});
+
+// Python вызывает эту функцию чтобы передать путь сохранения
+function setProjectPath(path) {
+  currentProjectPath = path;
+}
+
+// ═══════════════════════════════════════════════════════════
 //   ИНИЦИАЛИЗАЦИЯ
 // ═══════════════════════════════════════════════════════════
 function initMap(apiKey) {
   yandexApiKey = apiKey || '';
 
   if (map) {
-    // Перезаписываем ключ и перезагружаем тайлы
     changeTileLayer(currentTileType, yandexApiKey);
     return;
   }
 
-  // Центр — Москва (начало ВОВ)
   map = L.map('map', {
     center: [55.0, 32.0],
     zoom: 5,
@@ -104,21 +144,17 @@ function initMap(apiKey) {
     preferCanvas: false
   });
 
-  // Тёмный фон пока тайлы не загружены
   map.getContainer().style.background = '#1a1a2e';
 
   changeTileLayer('map', yandexApiKey);
 
-  // Слушатели событий карты
   map.on('mousedown', onMapMouseDown);
   map.on('mousemove', onMapMouseMove);
   map.on('mouseup',   onMapMouseUp);
 
-  // Создаём слой по умолчанию
   createLayer('layer_default', 'Слой 1');
   setActiveLayer('layer_default');
 
-  // Инициализируем QWebChannel
   new QWebChannel(qt.webChannelTransport, function(channel) {
     bridge = channel.objects.bridge;
     bridge.onStatus('Карта готова');
@@ -143,14 +179,12 @@ function changeTileLayer(type, apiKey) {
   var tmpl = urlTemplates[type] || urlTemplates['map'];
 
   if (yandexApiKey) {
-    // Яндекс-тайлы
     tileLayer = L.tileLayer(tmpl.replace('{key}', yandexApiKey), {
       attribution: '© Яндекс',
       maxZoom: 18,
       tileSize: 256
     });
   } else {
-    // Fallback: OpenStreetMap
     tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors',
       maxZoom: 19
@@ -169,7 +203,6 @@ function createLayer(id, name) {
 }
 
 function addLayerGroup(id, name) {
-  // Группа — только UI-контейнер, не Leaflet-объект
   layers[id] = { name:name, visible:true, group:null, objects:[], isGroup:true };
   layerOrder.push(id);
 }
@@ -220,9 +253,13 @@ function setTool(params) {
   if (typeof params.fontBold   !== 'undefined') fontBold   = params.fontBold;
   if (typeof params.fontItalic !== 'undefined') fontItalic = params.fontItalic;
 
-  // Управление курсором и drag
-  if (activeTool === 'select' || activeTool === 'text') {
+  // FIX #2: инструмент text НЕ включает dragging карты
+  if (activeTool === 'select') {
     map.dragging.enable();
+    eraserCursorEl.style.display = 'none';
+  } else if (activeTool === 'text') {
+    // Карта НЕ должна двигаться в режиме текста
+    map.dragging.disable();
     eraserCursorEl.style.display = 'none';
   } else if (activeTool === 'brush' || activeTool === 'eraser') {
     map.dragging.disable();
@@ -230,7 +267,6 @@ function setTool(params) {
     else eraserCursorEl.style.display = 'none';
   }
 
-  // Убираем выделение при смене инструмента
   if (activeTool !== 'select') deselectAll();
 }
 
@@ -243,7 +279,7 @@ function setFontBold(b)    { fontBold    = b; }
 function setFontItalic(i)  { fontItalic  = i; }
 
 function updateEraserCursor() {
-  var px = eraserSize * 2;  // диаметр в пикселях (приближённо)
+  var px = eraserSize * 2;
   eraserCursorEl.style.width  = px + 'px';
   eraserCursorEl.style.height = px + 'px';
 }
@@ -266,7 +302,6 @@ function onMapMouseDown(e) {
 
 function onMapMouseMove(e) {
   if (activeTool === 'eraser') {
-    // Позиция курсора-ластика
     var cp = e.containerPoint;
     eraserCursorEl.style.left    = cp.x + 'px';
     eraserCursorEl.style.top     = cp.y + 'px';
@@ -307,7 +342,6 @@ function startDrawing(latlng) {
     lineCap:  'round',
     lineJoin: 'round'
   });
-  // Добавляем на активный слой
   layers[activeLayerId].group.addLayer(currentPolyline);
   makeObjectInteractive(currentPolyline, activeLayerId);
 }
@@ -347,26 +381,11 @@ function finishDrawing() {
 //   ЛАСТИК
 // ═══════════════════════════════════════════════════════════
 function applyEraser(allLayers) {
-  if (eraserPath.length < 2) return;
+  if (eraserPath.length < 1) return;
 
-  // Строим буфер ластика как polygon из пути
-  var eraserCoords = eraserPath.map(function(ll){ return [ll.lng, ll.lat]; });
-  // Замыкаем
-  eraserCoords.push(eraserCoords[0]);
-
-  var eraserPoly;
-  try {
-    // Буфер (расширяем путь на радиус ластика в метрах)
-    var eraserLine = turf.lineString(eraserPath.map(function(ll){ return [ll.lng, ll.lat]; }));
-    var radiusKm   = map.distance(eraserPath[0], eraserPath[Math.floor(eraserPath.length/2)]) / 1000;
-    var bufRadius  = eraserSize * 0.0001;  // грубое приближение
-    eraserPoly = turf.buffer(eraserLine, bufRadius, {units:'degrees'});
-  } catch(ex) {
-    // Fallback: простой bbox
-    var bounds = L.latLngBounds(eraserPath);
-    var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
-    eraserPoly = turf.bboxPolygon([sw.lng, sw.lat, ne.lng, ne.lat]);
-  }
+  // FIX #5: используем попиксельное расстояние вместо turf.buffer
+  // eraserSize — радиус в условных единицах, переводим в метры
+  var eraserRadiusM = eraserSize * 8;
 
   var targetLayerIds = allLayers ? Object.keys(layers) : [activeLayerId];
 
@@ -377,33 +396,37 @@ function applyEraser(allLayers) {
 
     layers[lid].objects.forEach(function(obj) {
       if (obj.type === 'polyline') {
-        var line = turf.lineString(obj.latlngs.map(function(ll){ return [ll[1], ll[0]]; }));
-        try {
-          // Разрезаем линию по зоне ластика
-          var split = turf.lineSplit(line, eraserPoly);
-          // Оставляем только части вне ластика
-          var outside = [];
-          if (split && split.features && split.features.length > 0) {
-            split.features.forEach(function(seg) {
-              var mid = turf.midpoint(
-                turf.point(seg.geometry.coordinates[0]),
-                turf.point(seg.geometry.coordinates[seg.geometry.coordinates.length-1])
-              );
-              if (!turf.booleanPointInPolygon(mid, eraserPoly)) {
-                outside.push(seg);
-              }
-            });
-          }
+        // Проверяем каждую точку линии на расстояние до пути ластика
+        var keepSegments = [];
+        var currentSeg   = [];
+        var latlngs = obj.latlngs;
 
-          // Убираем оригинал
+        for (var i = 0; i < latlngs.length; i++) {
+          var ptLL  = L.latLng(latlngs[i][0], latlngs[i][1]);
+          var erased = false;
+          for (var j = 0; j < eraserPath.length; j++) {
+            if (map.distance(ptLL, eraserPath[j]) < eraserRadiusM) {
+              erased = true;
+              break;
+            }
+          }
+          if (!erased) {
+            currentSeg.push(latlngs[i]);
+          } else {
+            if (currentSeg.length >= 2) keepSegments.push(currentSeg.slice());
+            currentSeg = [];
+          }
+        }
+        if (currentSeg.length >= 2) keepSegments.push(currentSeg);
+
+        // Если хоть что-то изменилось
+        var totalKept = keepSegments.reduce(function(s,seg){ return s + seg.length; }, 0);
+        if (totalKept < latlngs.length) {
           layers[lid].group.removeLayer(obj.leafletObj);
           toRemove.push(obj);
 
-          // Добавляем оставшиеся части
-          outside.forEach(function(seg) {
-            var coords = seg.geometry.coordinates.map(function(c){ return [c[1], c[0]]; });
-            if (coords.length < 2) return;
-            var pl = L.polyline(coords, {
+          keepSegments.forEach(function(seg) {
+            var pl = L.polyline(seg, {
               color:  obj.color,
               weight: obj.weight,
               opacity:0.95, lineCap:'round', lineJoin:'round'
@@ -412,7 +435,7 @@ function applyEraser(allLayers) {
             var newObj = {
               id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
               type: 'polyline',
-              latlngs: coords,
+              latlngs: seg,
               color:  obj.color,
               weight: obj.weight,
               layerId:lid,
@@ -421,23 +444,16 @@ function applyEraser(allLayers) {
             makeObjectInteractive(pl, lid);
             toAdd.push(newObj);
           });
-        } catch(ex2) {
-          // Если turf не смог — просто удаляем линию, если она пересекается
-          var intersects = false;
-          obj.latlngs.forEach(function(ll) {
-            var pt = turf.point([ll[1], ll[0]]);
-            if (turf.booleanPointInPolygon(pt, eraserPoly)) intersects = true;
-          });
-          if (intersects) {
-            layers[lid].group.removeLayer(obj.leafletObj);
-            toRemove.push(obj);
-          }
         }
+
       } else if (obj.type === 'text' || obj.type === 'image') {
-        // Удаляем если центр в зоне ластика
         if (obj.latlng) {
-          var pt = turf.point([obj.latlng[1], obj.latlng[0]]);
-          if (turf.booleanPointInPolygon(pt, eraserPoly)) {
+          var ptLL = L.latLng(obj.latlng[0], obj.latlng[1]);
+          var erased = false;
+          for (var j = 0; j < eraserPath.length; j++) {
+            if (map.distance(ptLL, eraserPath[j]) < eraserRadiusM) { erased = true; break; }
+          }
+          if (erased) {
             if (obj.leafletObj) layers[lid].group.removeLayer(obj.leafletObj);
             toRemove.push(obj);
           }
@@ -445,7 +461,6 @@ function applyEraser(allLayers) {
       }
     });
 
-    // Применяем изменения
     toRemove.forEach(function(o) {
       layers[lid].objects = layers[lid].objects.filter(function(x){ return x !== o; });
     });
@@ -460,23 +475,39 @@ function applyEraser(allLayers) {
 // ═══════════════════════════════════════════════════════════
 //   ТЕКСТ
 // ═══════════════════════════════════════════════════════════
+
+// FIX #3: строим иконку с центрированием через CSS transform
+function buildTextIcon(text, fSize, fColor, fBold, fItalic) {
+  var weight = fBold   ? 'bold'   : 'normal';
+  var style  = fItalic ? 'italic' : 'normal';
+  var css    = style + ' ' + weight + ' ' + fSize + 'px Segoe UI, Arial, sans-serif';
+  return L.divIcon({
+    className: '',
+    html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor +
+          ';" ondblclick="editTextByEl(this)">' +
+          escapeHtml(text) + '</div>',
+    // iconAnchor [0,0] + CSS transform:translate(-50%,-50%) = реальный центр
+    iconAnchor: [0, 0],
+    iconSize: null
+  });
+}
+
 function placeText(latlng) {
+  // FIX #2: сбрасываем внутреннее состояние drag Leaflet после prompt
+  // (браузер теряет mouseup пока открыт prompt)
+  map.dragging.disable();
+
   var text = prompt('Введите текст подписи:');
+
+  // Сбрасываем зависший drag после закрытия prompt
+  map._dragging = false;
+  if (map.dragging._draggable) {
+    map.dragging._draggable._moving = false;
+  }
+
   if (!text) return;
 
-  var weight = fontBold   ? 'bold'   : 'normal';
-  var style  = fontItalic ? 'italic' : 'normal';
-  var css    = style + ' ' + weight + ' ' + fontSize + 'px Segoe UI, Arial, sans-serif';
-
-  var icon = L.divIcon({
-    className: '',
-    html: '<div style="font:' + css + ';color:' + fontColor +
-          ';white-space:nowrap;text-shadow:1px 1px 3px #000,0 0 6px #000;' +
-          'cursor:move;user-select:none;" ondblclick="editText(this)">' +
-          escapeHtml(text) + '</div>',
-    iconAnchor: [0, 0]
-  });
-
+  var icon   = buildTextIcon(text, fontSize, fontColor, fontBold, fontItalic);
   var marker = L.marker(latlng, { icon:icon, draggable:true });
   layers[activeLayerId].group.addLayer(marker);
 
@@ -485,24 +516,22 @@ function placeText(latlng) {
     type:   'text',
     text:   text,
     latlng: [latlng.lat, latlng.lng],
-    fontSize: fontSize,
-    fontColor:fontColor,
-    fontBold: fontBold,
+    fontSize:  fontSize,
+    fontColor: fontColor,
+    fontBold:  fontBold,
     fontItalic:fontItalic,
     layerId:   activeLayerId,
     leafletObj:marker
   };
 
-  // Обновляем координаты при перетаскивании
   marker.on('dragend', function(ev) {
     var ll = ev.target.getLatLng();
     obj.latlng = [ll.lat, ll.lng];
   });
 
-  // Клик → выделить
   marker.on('click', function(ev) {
     L.DomEvent.stopPropagation(ev);
-    selectObject(obj);
+    if (activeTool === 'select') selectObject(obj);
   });
 
   layers[activeLayerId].objects.push(obj);
@@ -510,9 +539,9 @@ function placeText(latlng) {
   notifyStatus('Текст добавлен');
 }
 
-function editText(el) {
+function editTextByEl(el) {
   var newText = prompt('Редактировать текст:', el.innerText);
-  if (newText !== null) el.innerText = newText;
+  if (newText !== null && newText !== '') el.innerText = newText;
 }
 
 function escapeHtml(s) {
@@ -564,7 +593,6 @@ function makeObjectInteractive(leafletObj, layerId) {
   leafletObj.on('click', function(ev) {
     if (activeTool !== 'select') return;
     L.DomEvent.stopPropagation(ev);
-    // Найти obj по leafletObj
     if (!layers[layerId]) return;
     var found = layers[layerId].objects.filter(function(o){ return o.leafletObj === leafletObj; })[0];
     if (found) selectObject(found);
@@ -644,6 +672,7 @@ function undoAction() {
 //   СОХРАНЕНИЕ / ЗАГРУЗКА ПРОЕКТА
 // ═══════════════════════════════════════════════════════════
 function saveProject(path) {
+  if (path) currentProjectPath = path;
   var data = {
     version: '1.0',
     center:  [map.getCenter().lat, map.getCenter().lng],
@@ -693,7 +722,6 @@ function loadProject(jsonStr) {
     return;
   }
 
-  // Очищаем текущее состояние
   Object.keys(layers).forEach(function(lid) {
     if (layers[lid].group) { layers[lid].group.clearLayers(); map.removeLayer(layers[lid].group); }
   });
@@ -704,7 +732,6 @@ function loadProject(jsonStr) {
   if (data.center) map.setView(data.center, data.zoom || 5);
   if (data.tileType) changeTileLayer(data.tileType, yandexApiKey);
 
-  // Восстанавливаем слои
   (data.layers || []).forEach(function(lyr) {
     if (lyr.isGroup) {
       layers[lyr.id] = { name:lyr.name, visible:lyr.visible, group:null, objects:[], isGroup:true };
@@ -715,7 +742,6 @@ function loadProject(jsonStr) {
     }
     layerOrder.push(lyr.id);
 
-    // Восстанавливаем объекты
     (lyr.objects || []).forEach(function(obj) {
       restoreObject(obj, lyr.id);
     });
@@ -725,7 +751,6 @@ function loadProject(jsonStr) {
     setActiveLayer(data.activeLayerId);
   }
 
-  // Отправляем дерево слоёв в Qt
   sendLayersToQt();
   notifyStatus('Проект загружен');
 }
@@ -744,17 +769,8 @@ function restoreObject(obj, layerId) {
     makeObjectInteractive(pl, layerId);
     lyr.objects.push(restored);
   } else if (obj.type === 'text') {
-    var ll = L.latLng(obj.latlng[0], obj.latlng[1]);
-    var weight = obj.fontBold   ? 'bold'   : 'normal';
-    var style  = obj.fontItalic ? 'italic' : 'normal';
-    var css    = style + ' ' + weight + ' ' + obj.fontSize + 'px Segoe UI,Arial';
-    var icon = L.divIcon({
-      className:'',
-      html: '<div style="font:' + css + ';color:' + obj.fontColor +
-            ';white-space:nowrap;text-shadow:1px 1px 3px #000;cursor:move;">' +
-            escapeHtml(obj.text) + '</div>',
-      iconAnchor:[0,0]
-    });
+    var ll     = L.latLng(obj.latlng[0], obj.latlng[1]);
+    var icon   = buildTextIcon(obj.text, obj.fontSize, obj.fontColor, obj.fontBold, obj.fontItalic);
     var marker = L.marker(ll, {icon:icon, draggable:true});
     lyr.group.addLayer(marker);
     var rObj = Object.assign({}, obj, { leafletObj:marker });
@@ -774,10 +790,9 @@ function restoreObject(obj, layerId) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//   ЭКСПОРТ PNG (через leaflet-easyprint или html2canvas fallback)
+//   ЭКСПОРТ PNG
 // ═══════════════════════════════════════════════════════════
 function exportPNG(path) {
-  // Используем встроенный скриншот через QWebEnginePage (вызываем из Python)
   if (bridge) bridge.onStatus('Экспорт: используйте Ctrl+E из меню Python');
   notifyStatus('Для экспорта PNG используйте кнопку "Экспорт" сверху');
 }
@@ -787,14 +802,12 @@ function exportPNG(path) {
 // ═══════════════════════════════════════════════════════════
 function sendLayersToQt() {
   if (!bridge) return;
-  // Строим плоский список групп (верхний уровень)
   var result = [];
   layerOrder.forEach(function(lid) {
     var lyr = layers[lid];
     if (lyr.isGroup) {
       result.push({ id:lid, name:lyr.name, children:[] });
     } else {
-      // Добавляем к последней группе или в корень
       var grp = result[result.length-1];
       if (grp && grp.children) grp.children.push({ id:lid, name:lyr.name });
       else result.push({ id:lid, name:lyr.name, children:[] });
@@ -810,7 +823,6 @@ function notifyStatus(msg) {
   if (bridge) bridge.onStatus(msg);
 }
 
-// Скрываем курсор-ластик когда мышь покидает карту
 document.addEventListener('mouseleave', function() {
   eraserCursorEl.style.display = 'none';
 });
