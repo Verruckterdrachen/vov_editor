@@ -32,6 +32,16 @@
   #debug-log.visible { display:block; }
   #debug-log .py-log { color:#4fc3f7; }
 
+  /* Кнопка копирования лога */
+  #debug-copy-btn {
+    position:fixed; bottom:4px; right:8px;
+    z-index:10001; padding:2px 8px;
+    background:#333; color:#0f0; border:1px solid #0f0;
+    border-radius:3px; font:11px monospace; cursor:pointer;
+    display:none;
+  }
+  #debug-log.visible ~ #debug-copy-btn { display:block; }
+
   .obj-tooltip { background:#222; color:#eee; border:1px solid #555;
                   font-size:11px; padding:2px 6px; border-radius:3px; }
   .selected-path { filter: drop-shadow(0 0 6px #00aaff); }
@@ -57,6 +67,7 @@
   /* Скрытие UI при экспорте */
   body.exporting .leaflet-control-container { display: none !important; }
   body.exporting #debug-log                 { display: none !important; }
+  body.exporting #debug-copy-btn            { display: none !important; }
   body.exporting #eraser-cursor             { display: none !important; }
 
   /* Пробел-drag: временный курсор */
@@ -69,6 +80,7 @@
 <div id="map"></div>
 <div id="eraser-cursor"></div>
 <div id="debug-log"></div>
+<button id="debug-copy-btn" title="Копировать лог">📋 Копировать</button>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
@@ -77,9 +89,10 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════
-//   ЛОГГЕР  (Ctrl+` — показать/скрыть; текст можно выделить и скопировать)
+//   ЛОГГЕР  (Ctrl+` — показать/скрыть)
 // ═══════════════════════════════════════════════════════════
 var debugEl      = document.getElementById('debug-log');
+var debugCopyBtn = document.getElementById('debug-copy-btn');
 var debugVisible = false;
 
 function log(msg) {
@@ -98,6 +111,25 @@ document.addEventListener('keydown', function(e) {
   if (e.ctrlKey && e.key === '`') {
     debugVisible = !debugVisible;
     debugEl.classList.toggle('visible', debugVisible);
+    debugCopyBtn.style.display = debugVisible ? 'block' : 'none';
+  }
+});
+
+// BUG-LOG fix: кнопка копирования лога
+debugCopyBtn.addEventListener('click', function() {
+  var text = Array.from(debugEl.children).map(function(el){ return el.textContent; }).join('\n');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() {
+      debugCopyBtn.textContent = '✅ Скопировано';
+      setTimeout(function(){ debugCopyBtn.textContent = '📋 Копировать'; }, 1500);
+    });
+  } else {
+    // fallback: выделить весь текст лога
+    var range = document.createRange();
+    range.selectNodeContents(debugEl);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 });
 
@@ -152,7 +184,6 @@ var yandexApiKey    = '';
 
 // ═══════════════════════════════════════════════════════════
 //   ПРОБЕЛ — временный pan (как в Photoshop)
-//   Работает во всех инструментах кроме select
 // ═══════════════════════════════════════════════════════════
 var spaceDown = false;
 
@@ -170,7 +201,6 @@ document.addEventListener('keyup', function(e) {
   if (e.code === 'Space' && spaceDown) {
     spaceDown = false;
     document.body.classList.remove('space-pan', 'panning');
-    // восстанавливаем dragging согласно текущему инструменту
     if (activeTool !== 'select') map.dragging.disable();
     log('Space pan: OFF');
   }
@@ -180,9 +210,7 @@ document.addEventListener('keyup', function(e) {
 //   ГОРЯЧИЕ КЛАВИШИ
 // ═══════════════════════════════════════════════════════════
 document.addEventListener('keydown', function(e) {
-  // FIX #8: убрали Ctrl+Z отсюда — Python-сторона уже обрабатывает его
-  // через QShortcut и вызывает undoAction() напрямую.
-  // Оставляем только Ctrl+S и Delete.
+  // FIX #8: Ctrl+Z убран, Python-сторона обрабатывает через QShortcut
   if (e.ctrlKey && e.key === 's') {
     e.preventDefault();
     if (currentProjectPath) {
@@ -216,7 +244,6 @@ function initMap(apiKey) {
   map.on('mousemove', onMapMouseMove);
   map.on('mouseup',   onMapMouseUp);
 
-  // FIX #9: отслеживаем drag-состояние для курсора пробела
   map.on('dragstart', function() { document.body.classList.add('panning'); });
   map.on('dragend',   function() { document.body.classList.remove('panning'); });
 
@@ -355,7 +382,6 @@ function updateEraserCursor() {
 //   СОБЫТИЯ МЫШИ
 // ═══════════════════════════════════════════════════════════
 function onMapMouseDown(e) {
-  // FIX #9: если зажат пробел — не рисуем, пусть dragging работает
   if (spaceDown) return;
   if (!activeLayerId || (layers[activeLayerId] && layers[activeLayerId].isGroup)) return;
   if (activeTool === 'brush')  { startDrawing(e.latlng); }
@@ -463,6 +489,8 @@ function finishDrawing() {
   log('Line drawn, pts before: ' + currentPath.length + ', after simplify: ' + simplified.length);
 
   currentPolyline = null; currentPath = [];
+  // FIX #2: синхронизировать панель слоёв после добавления объекта
+  sendLayersToQt();
   notifyStatus('Линия нарисована');
 }
 
@@ -540,6 +568,8 @@ function applyEraser(allLayers) {
     toAdd.forEach(function(o)    { layers[lid].objects.push(o); });
   });
 
+  // FIX #2: синхронизировать панель слоёв после ластика
+  sendLayersToQt();
   notifyStatus('Ластик применён');
 }
 
@@ -550,9 +580,7 @@ function buildTextIcon(text, fSize, fColor, fBold, fItalic) {
   var weight = fBold   ? 'bold'   : 'normal';
   var style  = fItalic ? 'italic' : 'normal';
   var css    = style + ' ' + weight + ' ' + fSize + 'px Segoe UI, Arial, sans-serif';
-  // FIX #6: text-shadow:none в инлайн-стиле гарантированно убивает любую тень
-  // (браузерный дефолт Chromium/WebEngine не может перебить инлайн)
-  // FIX #5: cursor:grab через CSS-класс .text-marker-wrap
+  // FIX #6: text-shadow:none в инлайн-стиле
   return L.divIcon({
     className: '',
     html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor + ';text-shadow:none">' +
@@ -586,7 +614,6 @@ function placeText(latlng) {
   };
 
   marker.on('dragstart', function() {
-    // визуальный фидбек — grabbing через класс на иконке
     if (marker._icon) marker._icon.style.cursor = 'grabbing';
   });
   marker.on('dragend', function(ev) {
@@ -595,7 +622,6 @@ function placeText(latlng) {
     if (marker._icon) marker._icon.style.cursor = '';
     log('Text dragged to ' + ll.lat.toFixed(4) + ',' + ll.lng.toFixed(4));
   });
-  // FIX #7: одиночный клик — выбор; двойной клик — диалог редактирования стиля
   marker.on('click', function(ev) {
     L.DomEvent.stopPropagation(ev);
     if (activeTool === 'select') selectObject(obj);
@@ -608,6 +634,8 @@ function placeText(latlng) {
   layers[activeLayerId].objects.push(obj);
   pushHistory({action:'add', obj:obj});
   log('Text placed: "' + text + '"');
+  // FIX #2: синхронизировать панель слоёв после добавления текста
+  sendLayersToQt();
   notifyStatus('Текст добавлен');
 }
 
@@ -628,10 +656,9 @@ function openTextEditDialog(obj, marker) {
 // Вызывается из Python после закрытия диалога
 function applyTextEdit(id, text, fSize, fColor, fBold, fItalic) {
   var obj = null;
-  var lid = null;
   Object.keys(layers).forEach(function(layerId) {
     layers[layerId].objects.forEach(function(o) {
-      if (o.id === id) { obj = o; lid = layerId; }
+      if (o.id === id) { obj = o; }
     });
   });
   if (!obj) { log('applyTextEdit: obj not found id=' + id); return; }
@@ -642,7 +669,6 @@ function applyTextEdit(id, text, fSize, fColor, fBold, fItalic) {
   obj.fontItalic = fItalic;
   var icon = buildTextIcon(text, fSize, fColor, fBold, fItalic);
   obj.leafletObj.setIcon(icon);
-  // переподключаем dblclick после смены иконки
   obj.leafletObj.off('dblclick');
   obj.leafletObj.on('dblclick', function(ev) {
     L.DomEvent.stopPropagation(ev);
@@ -676,6 +702,8 @@ function importImage(fileUrl) {
   layers[activeLayerId].objects.push(obj);
   pushHistory({action:'add', obj:obj});
   log('Image imported: ' + fileUrl);
+  // FIX #2: синхронизировать панель слоёв после импорта изображения
+  sendLayersToQt();
   notifyStatus('Изображение импортировано.');
 }
 
@@ -719,6 +747,8 @@ function deleteSelected() {
   pushHistory({action:'delete', obj:selectedObj});
   log('Deleted: ' + selectedObj.type + ' id=' + selectedObj.id);
   selectedObj = null;
+  // FIX #2: синхронизировать панель слоёв после удаления
+  sendLayersToQt();
   notifyStatus('Объект удалён');
 }
 
@@ -748,6 +778,8 @@ function undoAction() {
       layers[obj.layerId].objects.push(obj);
     }
   }
+  // FIX #2: синхронизировать панель слоёв после undo
+  sendLayersToQt();
   notifyStatus('Отменено');
 }
 
@@ -845,11 +877,14 @@ function sendLayersToQt() {
   var result = [];
   layerOrder.forEach(function(lid) {
     var lyr = layers[lid];
-    if (lyr.isGroup) { result.push({ id:lid, name:lyr.name, children:[] }); }
-    else {
+    if (lyr.isGroup) {
+      result.push({ id:lid, name:lyr.name, children:[] });
+    } else {
+      // FIX #2: передаём кол-во объектов для отображения в панели
+      var count = (lyr.objects || []).length;
       var grp = result[result.length-1];
-      if (grp && grp.children) grp.children.push({ id:lid, name:lyr.name });
-      else result.push({ id:lid, name:lyr.name, children:[] });
+      if (grp && grp.children) grp.children.push({ id:lid, name:lyr.name, objectCount:count });
+      else result.push({ id:lid, name:lyr.name, children:[], objectCount:count });
     }
   });
   bridge.onLayersData(JSON.stringify(result));
