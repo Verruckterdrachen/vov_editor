@@ -17,12 +17,16 @@
     background:rgba(255,100,100,0.15);
   }
 
+  /* FIX лог: pointer-events:auto + user-select:text — текст можно выделить и скопировать */
   #debug-log {
     position:fixed; bottom:0; left:0; right:0;
-    max-height:160px; overflow-y:auto;
-    background:rgba(0,0,0,0.82); color:#0f0;
+    max-height:200px; overflow-y:auto;
+    background:rgba(0,0,0,0.88); color:#0f0;
     font:11px monospace; padding:4px 8px;
-    z-index:10000; pointer-events:none;
+    z-index:10000;
+    pointer-events:auto;
+    user-select:text;
+    -webkit-user-select:text;
     display:none;
   }
   #debug-log.visible { display:block; }
@@ -32,23 +36,32 @@
                   font-size:11px; padding:2px 6px; border-radius:3px; }
   .selected-path { filter: drop-shadow(0 0 6px #00aaff); }
 
+  /* FIX #6: убрана text-shadow */
   .text-marker-wrap {
     white-space:nowrap;
-    text-shadow:1px 1px 3px #000, 0 0 6px #000;
     user-select:none;
     transform: translate(-50%, -50%);
     display: inline-block;
   }
 
+  /* FIX #4: курсор «палец» в режиме select */
+  body.tool-select #map { cursor: pointer; }
   body.tool-brush  #map { cursor: crosshair; }
   body.tool-eraser #map { cursor: none; }
   body.tool-text   #map { cursor: text; }
-  body.tool-select #map { cursor: default; }
+
+  /* FIX #5: курсор при перетаскивании текстового маркера */
+  .text-marker-wrap { cursor: grab; }
+  .text-marker-wrap:active { cursor: grabbing; }
 
   /* Скрытие UI при экспорте */
   body.exporting .leaflet-control-container { display: none !important; }
   body.exporting #debug-log                 { display: none !important; }
   body.exporting #eraser-cursor             { display: none !important; }
+
+  /* Пробел-drag: временный курсор */
+  body.space-pan #map { cursor: grab !important; }
+  body.space-pan.panning #map { cursor: grabbing !important; }
 </style>
 </head>
 <body class="tool-select">
@@ -64,10 +77,7 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════
-//   ЛОГГЕР
-//   Ctrl+` — показать/скрыть панель
-//   Зелёный  = JS-события
-//   Голубой  = Python-события (префикс [PY])
+//   ЛОГГЕР  (Ctrl+` — показать/скрыть; текст можно выделить и скопировать)
 // ═══════════════════════════════════════════════════════════
 var debugEl      = document.getElementById('debug-log');
 var debugVisible = false;
@@ -141,9 +151,38 @@ var currentTileType = 'map';
 var yandexApiKey    = '';
 
 // ═══════════════════════════════════════════════════════════
+//   ПРОБЕЛ — временный pan (как в Photoshop)
+//   Работает во всех инструментах кроме select
+// ═══════════════════════════════════════════════════════════
+var spaceDown = false;
+
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'Space' && !e.ctrlKey && !e.altKey && activeTool !== 'select') {
+    if (spaceDown) return;
+    spaceDown = true;
+    e.preventDefault();
+    map.dragging.enable();
+    document.body.classList.add('space-pan');
+    log('Space pan: ON');
+  }
+});
+document.addEventListener('keyup', function(e) {
+  if (e.code === 'Space' && spaceDown) {
+    spaceDown = false;
+    document.body.classList.remove('space-pan', 'panning');
+    // восстанавливаем dragging согласно текущему инструменту
+    if (activeTool !== 'select') map.dragging.disable();
+    log('Space pan: OFF');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
 //   ГОРЯЧИЕ КЛАВИШИ
 // ═══════════════════════════════════════════════════════════
 document.addEventListener('keydown', function(e) {
+  // FIX #8: убрали Ctrl+Z отсюда — Python-сторона уже обрабатывает его
+  // через QShortcut и вызывает undoAction() напрямую.
+  // Оставляем только Ctrl+S и Delete.
   if (e.ctrlKey && e.key === 's') {
     e.preventDefault();
     if (currentProjectPath) {
@@ -151,10 +190,6 @@ document.addEventListener('keydown', function(e) {
     } else {
       if (bridge) bridge.onStatus('__SAVE_DIALOG__');
     }
-  }
-  if (e.ctrlKey && e.key === 'z') {
-    e.preventDefault();
-    undoAction();
   }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     deleteSelected();
@@ -180,6 +215,10 @@ function initMap(apiKey) {
   map.on('mousedown', onMapMouseDown);
   map.on('mousemove', onMapMouseMove);
   map.on('mouseup',   onMapMouseUp);
+
+  // FIX #9: отслеживаем drag-состояние для курсора пробела
+  map.on('dragstart', function() { document.body.classList.add('panning'); });
+  map.on('dragend',   function() { document.body.classList.remove('panning'); });
 
   createLayer('layer_default', 'Слой 1');
   setActiveLayer('layer_default');
@@ -316,20 +355,22 @@ function updateEraserCursor() {
 //   СОБЫТИЯ МЫШИ
 // ═══════════════════════════════════════════════════════════
 function onMapMouseDown(e) {
+  // FIX #9: если зажат пробел — не рисуем, пусть dragging работает
+  if (spaceDown) return;
   if (!activeLayerId || (layers[activeLayerId] && layers[activeLayerId].isGroup)) return;
   if (activeTool === 'brush')  { startDrawing(e.latlng); }
   else if (activeTool === 'eraser') { isErasing = true; eraserPath = [e.latlng]; }
   else if (activeTool === 'text')   { placeText(e.latlng); }
 }
 function onMapMouseMove(e) {
-  if (activeTool === 'eraser') {
+  if (activeTool === 'eraser' && !spaceDown) {
     var cp = e.containerPoint;
     eraserCursorEl.style.left    = cp.x + 'px';
     eraserCursorEl.style.top     = cp.y + 'px';
     eraserCursorEl.style.display = 'block';
     if (isErasing) eraserPath.push(e.latlng);
   }
-  if (activeTool === 'brush' && isDrawing) continueDrawing(e.latlng);
+  if (activeTool === 'brush' && isDrawing && !spaceDown) continueDrawing(e.latlng);
 }
 function onMapMouseUp(e) {
   if (activeTool === 'brush' && isDrawing) finishDrawing();
@@ -509,10 +550,11 @@ function buildTextIcon(text, fSize, fColor, fBold, fItalic) {
   var weight = fBold   ? 'bold'   : 'normal';
   var style  = fItalic ? 'italic' : 'normal';
   var css    = style + ' ' + weight + ' ' + fSize + 'px Segoe UI, Arial, sans-serif';
+  // FIX #6: нет text-shadow; FIX #5: cursor:grab через CSS-класс
   return L.divIcon({
     className: '',
-    html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor +
-          ';cursor:text" ondblclick="editTextByEl(this)">' + escapeHtml(text) + '</div>',
+    html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor + '">' +
+          escapeHtml(text) + '</div>',
     iconAnchor: [0, 0],
     iconSize: null
   });
@@ -541,14 +583,24 @@ function placeText(latlng) {
     layerId:activeLayerId, leafletObj:marker
   };
 
+  marker.on('dragstart', function() {
+    // визуальный фидбек — grabbing через класс на иконке
+    if (marker._icon) marker._icon.style.cursor = 'grabbing';
+  });
   marker.on('dragend', function(ev) {
     var ll = ev.target.getLatLng();
     obj.latlng = [ll.lat, ll.lng];
+    if (marker._icon) marker._icon.style.cursor = '';
     log('Text dragged to ' + ll.lat.toFixed(4) + ',' + ll.lng.toFixed(4));
   });
+  // FIX #7: одиночный клик — выбор; двойной клик — диалог редактирования стиля
   marker.on('click', function(ev) {
     L.DomEvent.stopPropagation(ev);
     if (activeTool === 'select') selectObject(obj);
+  });
+  marker.on('dblclick', function(ev) {
+    L.DomEvent.stopPropagation(ev);
+    openTextEditDialog(obj, marker);
   });
 
   layers[activeLayerId].objects.push(obj);
@@ -557,10 +609,47 @@ function placeText(latlng) {
   notifyStatus('Текст добавлен');
 }
 
-function editTextByEl(el) {
-  var newText = prompt('Редактировать текст:', el.innerText);
-  if (newText !== null && newText !== '') el.innerText = newText;
+// FIX #7: диалог редактирования текстового объекта через bridge → Python
+function openTextEditDialog(obj, marker) {
+  if (!bridge) return;
+  var payload = JSON.stringify({
+    id:        obj.id,
+    text:      obj.text,
+    fontSize:  obj.fontSize,
+    fontColor: obj.fontColor,
+    fontBold:  obj.fontBold,
+    fontItalic:obj.fontItalic
+  });
+  bridge.onStatus('__EDIT_TEXT__:' + payload);
 }
+
+// Вызывается из Python после закрытия диалога
+function applyTextEdit(id, text, fSize, fColor, fBold, fItalic) {
+  var obj = null;
+  var lid = null;
+  Object.keys(layers).forEach(function(layerId) {
+    layers[layerId].objects.forEach(function(o) {
+      if (o.id === id) { obj = o; lid = layerId; }
+    });
+  });
+  if (!obj) { log('applyTextEdit: obj not found id=' + id); return; }
+  obj.text      = text;
+  obj.fontSize  = fSize;
+  obj.fontColor = fColor;
+  obj.fontBold  = fBold;
+  obj.fontItalic = fItalic;
+  var icon = buildTextIcon(text, fSize, fColor, fBold, fItalic);
+  obj.leafletObj.setIcon(icon);
+  // переподключаем dblclick после смены иконки
+  obj.leafletObj.off('dblclick');
+  obj.leafletObj.on('dblclick', function(ev) {
+    L.DomEvent.stopPropagation(ev);
+    openTextEditDialog(obj, obj.leafletObj);
+  });
+  log('Text edited: id=' + id + ' text="' + text + '"');
+  notifyStatus('Текст обновлён');
+}
+
 function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -726,8 +815,16 @@ function restoreObject(obj, layerId) {
     var marker = L.marker(ll, {icon:icon, draggable:true});
     lyr.group.addLayer(marker);
     var rObj = Object.assign({}, obj, {leafletObj:marker});
-    marker.on('dragend', function(ev){ var ll2=ev.target.getLatLng(); rObj.latlng=[ll2.lat,ll2.lng]; });
+    marker.on('dragstart', function() { if (marker._icon) marker._icon.style.cursor = 'grabbing'; });
+    marker.on('dragend', function(ev) {
+      var ll2=ev.target.getLatLng(); rObj.latlng=[ll2.lat,ll2.lng];
+      if (marker._icon) marker._icon.style.cursor = '';
+    });
     marker.on('click', function(ev){ L.DomEvent.stopPropagation(ev); selectObject(rObj); });
+    marker.on('dblclick', function(ev) {
+      L.DomEvent.stopPropagation(ev);
+      openTextEditDialog(rObj, marker);
+    });
     lyr.objects.push(rObj);
   } else if (obj.type==='image') {
     var overlay = L.imageOverlay(obj.url, obj.bounds, {opacity:obj.opacity||0.8, interactive:true});

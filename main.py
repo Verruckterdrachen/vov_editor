@@ -15,7 +15,8 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QSlider, QColorDialog, QFileDialog,
     QInputDialog, QMessageBox, QSplitter, QTreeWidget, QTreeWidgetItem,
     QToolButton, QStatusBar, QComboBox, QSpinBox, QCheckBox, QDialog,
-    QDialogButtonBox, QLineEdit, QFormLayout, QGroupBox, QSizePolicy
+    QDialogButtonBox, QLineEdit, QFormLayout, QGroupBox, QSizePolicy,
+    QAbstractItemView
 )
 from PyQt6.QtCore import (
     Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QSize, QTimer
@@ -133,7 +134,7 @@ class MainWindow(QMainWindow):
         self._font_color           = "#ffffff"
         self._font_bold            = False
         self._font_italic          = False
-        self._export_path          = None   # используется при экспорте
+        self._export_path          = None
 
         self._setup_ui()
         self._setup_shortcuts()
@@ -217,6 +218,9 @@ class MainWindow(QMainWindow):
         self.layer_tree.setColumnWidth(0, 190)
         self.layer_tree.setColumnWidth(1, 28)
         self.layer_tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+        # FIX #3: отключаем встроенный inline-edit, чтобы двойной клик
+        # не перехватывался деревом — обрабатываем его вручную через сигнал
+        self.layer_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.layer_tree.itemClicked.connect(self._on_layer_clicked)
         self.layer_tree.itemDoubleClicked.connect(self._on_layer_double_clicked)
         self.layer_tree.orderChanged.connect(self._on_layer_order_changed)
@@ -325,7 +329,6 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
 
-    # ── Вспомогательный метод логирования в JS-панель ──────
     def _js_log(self, msg: str):
         """Пишет сообщение в debug-лог JS (Ctrl+` для показа)."""
         safe = msg.replace("\\", "\\\\").replace("'", "\\'")
@@ -409,6 +412,8 @@ class MainWindow(QMainWindow):
             if not item.is_group: self._activate_layer(item)
 
     def _on_layer_double_clicked(self, item, col):
+        # FIX #3: NoEditTriggers отключает встроенный edit,
+        # здесь вручную показываем диалог переименования
         if not isinstance(item, LayerItem): return
         old_name = item.text(0)
         name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:", text=old_name)
@@ -540,16 +545,7 @@ class MainWindow(QMainWindow):
         self._js("sendLayersToQt();")
         self._js_log(f"Project opened: {os.path.basename(path)}")
 
-    # ── Экспорт PNG ────────────────────────────────────────
     def _export_png(self):
-        """Экспорт видимой области карты через QWebEngineView.grab().
-        Алгоритм:
-          1. Диалог выбора пути
-          2. JS скрывает UI Leaflet (кнопки зума, атрибуция, debug-лог)
-          3. QTimer 150мс — ждём перерисовку WebEngine
-          4. grab() → QPixmap → сохранить PNG
-          5. JS восстанавливает UI
-        """
         path, _ = QFileDialog.getSaveFileName(
             self, "Экспорт PNG", "export.png", "PNG (*.png)"
         )
@@ -558,13 +554,10 @@ class MainWindow(QMainWindow):
         self._export_path = path
         self.status_lbl.setText("Подготовка экспорта...")
         self._js_log(f"Export PNG started: {os.path.basename(path)}")
-        # Шаг 1: скрываем Leaflet UI
         self._js("hideMapUI();")
-        # Шаг 2: даём WebEngine время перерисоваться
         QTimer.singleShot(150, self._do_grab)
 
     def _do_grab(self):
-        """Выполняет grab() и сохраняет файл, затем восстанавливает UI."""
         path = self._export_path
         try:
             pixmap = self.webview.grab()
@@ -580,7 +573,6 @@ class MainWindow(QMainWindow):
             self.status_lbl.setText(f"Ошибка экспорта: {e}")
             self._js_log(f"Export PNG ERROR: {e}")
         finally:
-            # Шаг 3: всегда восстанавливаем UI
             self._js("showMapUI();")
             self._export_path = None
 
