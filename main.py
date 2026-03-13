@@ -75,7 +75,7 @@ class ApiKeyDialog(QDialog):
         return self.key_edit.text().strip()
 
 
-# ── Панель инструментов (правая) ────────────────────────
+# ── Панель инструментов ───────────────────────────────
 class ToolButton(QToolButton):
     def __init__(self, text, tooltip, shortcut="", parent=None):
         super().__init__(parent)
@@ -129,18 +129,14 @@ class MainWindow(QMainWindow):
         if not self.config.get("yandex_api_key"):
             QTimer.singleShot(500, self._ask_api_key)
 
-    # ── Построение интерфейса ──────────────────────────────
     def _setup_ui(self):
         self.setStyleSheet(DARK_STYLE)
-
         central = QWidget()
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-
         root_layout.addWidget(self._build_topbar())
-
         work = QHBoxLayout()
         work.setContentsMargins(0, 0, 0, 0)
         work.setSpacing(0)
@@ -148,7 +144,6 @@ class MainWindow(QMainWindow):
         work.addWidget(self._build_webview(), stretch=1)
         work.addWidget(self._build_tools_panel())
         root_layout.addLayout(work, stretch=1)
-
         root_layout.addWidget(self._build_statusbar())
 
     def _build_topbar(self):
@@ -157,15 +152,13 @@ class MainWindow(QMainWindow):
         bar.setObjectName("topbar")
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(8, 4, 8, 4)
-
         self.project_label = QLabel("Новый проект")
         self.project_label.setStyleSheet("font-size:14px;font-weight:bold;color:#e0e0e0;")
         lay.addWidget(self.project_label)
         lay.addStretch()
-
         for txt, tip, slot in [
             ("📂 Открыть",  "Ctrl+O",  self._open_project),
-            ("💾 Сохранить","Страница+S (Ctrl+S)",  self._save_project),
+            ("💾 Сохранить", "Ctrl+S",  self._save_project),
             ("📤 Экспорт",  "Ctrl+E",  self._export_png),
             ("🔑 API-ключ", "Настроить ключ Яндекса", self._ask_api_key),
         ]:
@@ -174,7 +167,6 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(slot)
             btn.setFixedHeight(30)
             lay.addWidget(btn)
-
         lay.addSpacing(12)
         lay.addWidget(QLabel("Слой:"))
         self.tile_combo = QComboBox()
@@ -182,7 +174,6 @@ class MainWindow(QMainWindow):
         self.tile_combo.currentIndexChanged.connect(self._change_tile_layer)
         self.tile_combo.setFixedWidth(100)
         lay.addWidget(self.tile_combo)
-
         return bar
 
     def _build_layers_panel(self):
@@ -192,11 +183,9 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(4, 4, 4, 4)
         lay.setSpacing(4)
-
         lbl = QLabel("СЛОИ")
         lbl.setStyleSheet("color:#aaa;font-size:11px;font-weight:bold;")
         lay.addWidget(lbl)
-
         btn_row = QHBoxLayout()
         for txt, tip, slot in [
             ("📁", "Добавить группу",  self._add_group),
@@ -209,7 +198,6 @@ class MainWindow(QMainWindow):
             b.clicked.connect(slot)
             btn_row.addWidget(b)
         lay.addLayout(btn_row)
-
         self.layer_tree = QTreeWidget()
         self.layer_tree.setColumnCount(2)
         self.layer_tree.setHeaderHidden(True)
@@ -219,7 +207,6 @@ class MainWindow(QMainWindow):
         self.layer_tree.itemClicked.connect(self._on_layer_clicked)
         self.layer_tree.itemDoubleClicked.connect(self._on_layer_double_clicked)
         lay.addWidget(self.layer_tree)
-
         return panel
 
     def _build_webview(self):
@@ -227,12 +214,10 @@ class MainWindow(QMainWindow):
         settings = self.webview.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-
         self.channel = QWebChannel()
         self.bridge  = Bridge(self)
         self.channel.registerObject("bridge", self.bridge)
         self.webview.page().setWebChannel(self.channel)
-
         self.webview.load(QUrl.fromLocalFile(MAP_HTML))
         self.webview.loadFinished.connect(self._on_map_loaded)
         return self.webview
@@ -244,7 +229,6 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(4, 8, 4, 8)
         lay.setAlignment(Qt.AlignmentFlag.AlignTop)
-
         self.tool_buttons = {}
         tools = [
             ("select",  "🖱",  "Выбор",   "V"),
@@ -258,7 +242,6 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda checked, t=tid: self._set_tool(t))
             lay.addWidget(btn)
             self.tool_buttons[tid] = btn
-
         self.tool_buttons["select"].setChecked(True)
         return panel
 
@@ -269,13 +252,11 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(8, 4, 8, 4)
         lay.setSpacing(12)
-
         self.color_btn = QPushButton("  🎨 Цвет  ")
         self.color_btn.setFixedHeight(32)
         self.color_btn.clicked.connect(self._pick_brush_color)
         self._update_color_button()
         lay.addWidget(self.color_btn)
-
         lay.addWidget(QLabel("Толщина:"))
         self.brush_slider = QSlider(Qt.Orientation.Horizontal)
         self.brush_slider.setRange(1, 20)
@@ -285,9 +266,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.brush_slider)
         self.brush_size_lbl = QLabel(str(self._brush_size))
         lay.addWidget(self.brush_size_lbl)
-
         lay.addSpacing(8)
-
         lay.addWidget(QLabel("Ластик:"))
         self.eraser_slider = QSlider(Qt.Orientation.Horizontal)
         self.eraser_slider.setRange(5, 100)
@@ -297,9 +276,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.eraser_slider)
         self.eraser_size_lbl = QLabel(str(self._eraser_size))
         lay.addWidget(self.eraser_size_lbl)
-
         lay.addSpacing(8)
-
         lay.addWidget(QLabel("Шрифт:"))
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(8, 72)
@@ -307,44 +284,33 @@ class MainWindow(QMainWindow):
         self.font_size_spin.setFixedWidth(60)
         self.font_size_spin.valueChanged.connect(self._on_font_size_changed)
         lay.addWidget(self.font_size_spin)
-
         self.font_color_btn = QPushButton("🔤 Цвет")
         self.font_color_btn.setFixedHeight(30)
         self.font_color_btn.clicked.connect(self._pick_font_color)
         lay.addWidget(self.font_color_btn)
-
         self.bold_cb = QCheckBox("Ж")
         self.bold_cb.stateChanged.connect(self._on_font_bold_changed)
         lay.addWidget(self.bold_cb)
-
         self.italic_cb = QCheckBox("К")
         self.italic_cb.stateChanged.connect(self._on_font_italic_changed)
         lay.addWidget(self.italic_cb)
-
         lay.addStretch()
-
         self.status_lbl = QLabel("Готово")
         self.status_lbl.setStyleSheet("color:#888;")
         lay.addWidget(self.status_lbl)
-
         return bar
 
-    # ── Горячие клавиши ───────────────────────────────────────
     def _setup_shortcuts(self):
-        # FIX #7: горячие клавиши теперь работают через JS (см. map.html)
-        # Qt shortcuts оставляем только для случая, когда фокус вне webview
         QShortcut(QKeySequence("V"),      self, lambda: self._set_tool("select"))
         QShortcut(QKeySequence("B"),      self, lambda: self._set_tool("brush"))
         QShortcut(QKeySequence("E"),      self, lambda: self._set_tool("eraser"))
         QShortcut(QKeySequence("T"),      self, lambda: self._set_tool("text"))
         QShortcut(QKeySequence("Ctrl+O"), self, self._open_project)
         QShortcut(QKeySequence("Ctrl+E"), self, self._export_png)
-        # Ctrl+S/Z теперь обрабатывается в JS, но оставляем запасной вариант для Qt
         QShortcut(QKeySequence("Ctrl+S"), self, self._save_project)
         QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
 
-    # ── Карта загружена ──────────────────────────────────────────
     def _on_map_loaded(self, ok):
         if not ok:
             self.status_lbl.setText("Ошибка загрузки карты!")
@@ -353,61 +319,52 @@ class MainWindow(QMainWindow):
         self._js(f'initMap("{api_key}");')
         self.status_lbl.setText("Карта загружена")
 
-    # ── Смена инструмента ──────────────────────────────────────
     def _set_tool(self, tool: str):
         self._current_tool = tool
         for tid, btn in self.tool_buttons.items():
             btn.setChecked(tid == tool)
-
         if tool == "import":
             self._import_image()
             self._set_tool("select")
             return
-
         params = json.dumps({
-            "tool":        tool,
-            "color":       self._brush_color,
-            "size":        self._brush_size,
-            "eraserSize":  self._eraser_size,
-            "fontSize":    self._font_size,
-            "fontColor":   self._font_color,
-            "fontBold":    self._font_bold,
-            "fontItalic":  self._font_italic,
+            "tool":       tool,
+            "color":      self._brush_color,
+            "size":       self._brush_size,
+            "eraserSize": self._eraser_size,
+            "fontSize":   self._font_size,
+            "fontColor":  self._font_color,
+            "fontBold":   self._font_bold,
+            "fontItalic": self._font_italic,
         })
         self._js(f"setTool({params});")
         self.status_lbl.setText(f"Инструмент: {tool}")
 
-    # ── Слои ──────────────────────────────────────────────────────
     def _add_group(self):
-        name, ok = QInputDialog.getText(self, "Новая группа", "Название группы (например: 1941):")
-        if not ok or not name:
-            return
+        name, ok = QInputDialog.getText(self, "Новая группа", "Название группы:")
+        if not ok or not name: return
         lid = f"group_{id(name)}"
         item = LayerItem(lid, name, is_group=True)
         self.layer_tree.addTopLevelItem(item)
         self._js(f'addLayerGroup("{lid}", "{name}");')
 
     def _add_layer(self):
-        name, ok = QInputDialog.getText(self, "Новый слой", "Название слоя (например: 22 июня):")
-        if not ok or not name:
-            return
+        name, ok = QInputDialog.getText(self, "Новый слой", "Название слоя:")
+        if not ok or not name: return
         lid = f"layer_{id(name)}"
         item = LayerItem(lid, name)
-
         selected = self.layer_tree.currentItem()
         if selected and isinstance(selected, LayerItem) and selected.is_group:
             selected.addChild(item)
             selected.setExpanded(True)
         else:
             self.layer_tree.addTopLevelItem(item)
-
         self._activate_layer(item)
         self._js(f'addLayer("{lid}", "{name}");')
 
     def _delete_layer(self):
         item = self.layer_tree.currentItem()
-        if not item or not isinstance(item, LayerItem):
-            return
+        if not item or not isinstance(item, LayerItem): return
         lid = item.layer_id
         root = self.layer_tree.invisibleRootItem()
         parent = item.parent() or root
@@ -416,18 +373,15 @@ class MainWindow(QMainWindow):
         self._active_layer_id = None
 
     def _on_layer_clicked(self, item, col):
-        if not isinstance(item, LayerItem):
-            return
+        if not isinstance(item, LayerItem): return
         if col == 1:
             item.toggle_visibility()
             self._js(f'setLayerVisible("{item.layer_id}", {str(item.visible).lower()});')
         else:
-            if not item.is_group:
-                self._activate_layer(item)
+            if not item.is_group: self._activate_layer(item)
 
     def _on_layer_double_clicked(self, item, col):
-        if not isinstance(item, LayerItem):
-            return
+        if not isinstance(item, LayerItem): return
         name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:", text=item.text(0))
         if ok and name:
             item.setText(0, name)
@@ -448,7 +402,6 @@ class MainWindow(QMainWindow):
         for i in range(item.childCount()):
             self._clear_highlight(item.child(i))
 
-    # ── Настройки инструментов ─────────────────────────────────
     def _pick_brush_color(self):
         c = QColorDialog.getColor(QColor(self._brush_color), self, "Цвет кисти")
         if c.isValid():
@@ -490,33 +443,26 @@ class MainWindow(QMainWindow):
         self._font_italic = bool(state)
         self._js(f"setFontItalic({str(self._font_italic).lower()});")
 
-    # ── Смена тайлового слоя ─────────────────────────────────────
     def _change_tile_layer(self, idx):
         types = ["map", "sat", "skl"]
-        t = types[idx]
         key = self.config.get("yandex_api_key", "")
-        self._js(f'changeTileLayer("{t}", "{key}");')
+        self._js(f'changeTileLayer("{types[idx]}", "{key}");')
 
-    # ── Импорт изображения ─────────────────────────────────────
     def _import_image(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Выбрать изображение", "", "Images (*.png *.jpg *.jpeg *.bmp)"
         )
-        if not path:
-            return
+        if not path: return
         path_js = path.replace("\\", "/")
         self._js(f'importImage("file:///{path_js}");')
 
-    # ── Сохранение / открытие ─────────────────────────────────
     def _save_project(self):
         if not self._current_project_path:
             path, _ = QFileDialog.getSaveFileName(
                 self, "Сохранить проект", "projects/project.json", "JSON (*.json)"
             )
-            if not path:
-                return
+            if not path: return
             self._current_project_path = path
-            # FIX #7: сообщаем путь в JS чтобы Ctrl+S в браузере знал куда сохранять
             safe_path = self._current_project_path.replace("\\", "/")
             self._js(f'setProjectPath("{safe_path}");')
         safe_path = self._current_project_path.replace("\\", "/")
@@ -527,38 +473,27 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, "Открыть проект", "projects/", "JSON (*.json)"
         )
-        if not path:
-            return
+        if not path: return
         self._current_project_path = path
-        # Передаём путь в JS
         safe_path = path.replace("\\", "/")
         self._js(f'setProjectPath("{safe_path}");')
         with open(path, "r", encoding="utf-8") as f:
             data = f.read()
-        data_js = json.dumps(data)
-        self._js(f"loadProject({data_js});")
+        self._js(f"loadProject({json.dumps(data)});")
         self.project_label.setText(os.path.basename(path))
-        self._rebuild_layer_tree_from_js()
-
-    def _rebuild_layer_tree_from_js(self):
         self._js("sendLayersToQt();")
 
     def _export_png(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Экспорт PNG", "export.png", "PNG (*.png)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт PNG", "export.png", "PNG (*.png)")
         if path:
-            path_js = path.replace("\\", "/")
-            self._js(f'exportPNG("{path_js}");')
+            self._js(f'exportPNG("{path.replace(chr(92), "/")}");')
 
-    # ── Отмена / удаление ──────────────────────────────────────
     def _undo(self):
         self._js("undoAction();")
 
     def _delete_selected(self):
         self._js("deleteSelected();")
 
-    # ── API-ключ ────────────────────────────────────────────────────
     def _ask_api_key(self):
         dlg = ApiKeyDialog(self, self.config.get("yandex_api_key", ""))
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -567,13 +502,10 @@ class MainWindow(QMainWindow):
             save_config(self.config)
             self._js(f'initMap("{key}");')
 
-    # ── Вспомогательный вызов JS ────────────────────────────
     def _js(self, code: str):
         self.webview.page().runJavaScript(code)
 
-    # ── Принять данные слоёв от JS ───────────────────────────
     def receive_layers(self, layers_json: str):
-        """Called from bridge.py when JS sends layer tree."""
         try:
             layers = json.loads(layers_json)
             self.layer_tree.clear()
@@ -588,9 +520,13 @@ class MainWindow(QMainWindow):
             self.status_lbl.setText(f"Ошибка загрузки слоёв: {e}")
 
     def on_js_status(self, msg: str):
-        # FIX #7: JS шлёт специальный сигнал, когда путь не задан (Ctrl+S в JS)
+        # JS шлёт спецсигналы:
         if msg == "__SAVE_DIALOG__":
             self._save_project()
+            return
+        # Авто-переключение на Select после текста
+        if msg == "__SWITCH_SELECT__":
+            self._set_tool("select")
             return
         self.status_lbl.setText(msg)
 
