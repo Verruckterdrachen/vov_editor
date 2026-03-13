@@ -44,7 +44,7 @@ def save_config(cfg: dict):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
-# ── Диалог ввода API-ключа ──────────────────────────────
+# ── Диалог ввода API-ключа ──────────────────────
 class ApiKeyDialog(QDialog):
     def __init__(self, parent=None, current_key=""):
         super().__init__(parent)
@@ -77,7 +77,80 @@ class ApiKeyDialog(QDialog):
         return self.key_edit.text().strip()
 
 
-# ── Панель инструментов ───────────────────────────────
+# ── FIX #7: Диалог редактирования текстового объекта ────────
+class TextEditDialog(QDialog):
+    def __init__(self, parent=None, obj_data: dict = None):
+        super().__init__(parent)
+        self.setWindowTitle("Редактировать текст")
+        self.setMinimumWidth(400)
+        obj_data = obj_data or {}
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        # Поле текста
+        self.text_edit = QLineEdit(obj_data.get("text", ""))
+        form.addRow("Текст:", self.text_edit)
+
+        # Размер шрифта
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(8, 120)
+        self.size_spin.setValue(int(obj_data.get("fontSize", 14)))
+        form.addRow("Размер шрифта:", self.size_spin)
+
+        # Цвет
+        self._color = obj_data.get("fontColor", "#ffffff")
+        self.color_btn = QPushButton()
+        self.color_btn.setFixedHeight(28)
+        self._update_color_btn()
+        self.color_btn.clicked.connect(self._pick_color)
+        form.addRow("Цвет:", self.color_btn)
+
+        # Жирный / Курсив
+        style_row = QHBoxLayout()
+        self.bold_cb   = QCheckBox("Жирный")
+        self.italic_cb = QCheckBox("Курсив")
+        self.bold_cb.setChecked(bool(obj_data.get("fontBold", False)))
+        self.italic_cb.setChecked(bool(obj_data.get("fontItalic", False)))
+        style_row.addWidget(self.bold_cb)
+        style_row.addWidget(self.italic_cb)
+        style_row.addStretch()
+        form.addRow("Начертание:", style_row)
+
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _pick_color(self):
+        c = QColorDialog.getColor(QColor(self._color), self, "Цвет текста")
+        if c.isValid():
+            self._color = c.name()
+            self._update_color_btn()
+
+    def _update_color_btn(self):
+        lightness = QColor(self._color).lightness()
+        fg = "#000" if lightness > 128 else "#fff"
+        self.color_btn.setText(self._color)
+        self.color_btn.setStyleSheet(
+            f"background:{self._color};color:{fg};border-radius:4px;padding:2px 8px;"
+        )
+
+    def get_values(self):
+        return {
+            "text":      self.text_edit.text(),
+            "fontSize":  self.size_spin.value(),
+            "fontColor": self._color,
+            "fontBold":  self.bold_cb.isChecked(),
+            "fontItalic": self.italic_cb.isChecked(),
+        }
+
+
+# ── Панель инструментов ───────────────────────────
 class ToolButton(QToolButton):
     def __init__(self, text, tooltip, shortcut="", parent=None):
         super().__init__(parent)
@@ -88,7 +161,7 @@ class ToolButton(QToolButton):
         self.setFont(QFont("Segoe UI Emoji", 14))
 
 
-# ── Элемент дерева слоёв ──────────────────────────────
+# ── Элемент дерева слоёв ──────────────────────────
 class LayerItem(QTreeWidgetItem):
     def __init__(self, layer_id: str, name: str, is_group=False):
         super().__init__()
@@ -106,9 +179,9 @@ class LayerItem(QTreeWidgetItem):
         self._update_icon()
 
 
-# ── QTreeWidget с перехватом dropEvent ────────────────
+# ── QTreeWidget с перехватом dropEvent ────────────────────
 class LayerTree(QTreeWidget):
-    """QTreeWidget с сигналом об изменении порядка слоёв после drag-and-drop."""
+    """Сигнал об изменении порядка слоёв после drag-and-drop."""
     orderChanged = pyqtSignal()
 
     def dropEvent(self, event):
@@ -116,7 +189,7 @@ class LayerTree(QTreeWidget):
         self.orderChanged.emit()
 
 
-# ── Главное окно ────────────────────────────────────────────────
+# ── Главное окно ─────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -619,10 +692,36 @@ class MainWindow(QMainWindow):
         if msg == "__SWITCH_SELECT__":
             self._set_tool("select")
             return
+        # FIX #7: двойной клик на текстовый объект — открыть диалог редактирования
+        if msg.startswith("__EDIT_TEXT__:"):
+            try:
+                payload = json.loads(msg[len("__EDIT_TEXT__:"):])
+                dlg = TextEditDialog(self, payload)
+                if dlg.exec() == QDialog.DialogCode.Accepted:
+                    v = dlg.get_values()
+                    # Защищаем строки от встроенных кавычек JS
+                    text_js   = json.dumps(v["text"])
+                    color_js  = json.dumps(v["fontColor"])
+                    bold_js   = str(v["fontBold"]).lower()
+                    italic_js = str(v["fontItalic"]).lower()
+                    obj_id    = json.dumps(payload["id"])
+                    self._js(
+                        f"applyTextEdit({obj_id}, {text_js}, "
+                        f"{v['fontSize']}, {color_js}, {bold_js}, {italic_js});"
+                    )
+                    self._js_log(
+                        f"Text edit applied: id={payload['id']} "
+                        f"text={v['text']} size={v['fontSize']} "
+                        f"color={v['fontColor']} bold={v['fontBold']} italic={v['fontItalic']}"
+                    )
+            except Exception as e:
+                self.status_lbl.setText(f"Ошибка редактирования текста: {e}")
+                self._js_log(f"ERROR __EDIT_TEXT__: {e}")
+            return
         self.status_lbl.setText(msg)
 
 
-# ── Тёмная тема ─────────────────────────────────────────────────────────────
+# ── Тёмная тема ───────────────────────────────────────────────────────────────────────────
 DARK_STYLE = """
 QWidget { background:#1e1e1e; color:#e0e0e0; font-family:'Segoe UI'; font-size:12px; }
 QMainWindow { background:#1e1e1e; }
