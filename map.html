@@ -36,7 +36,7 @@
                   font-size:11px; padding:2px 6px; border-radius:3px; }
   .selected-path { filter: drop-shadow(0 0 6px #00aaff); }
 
-  /* FIX #6: убрана text-shadow */
+  /* FIX #6: text-shadow убирается инлайн в buildTextIcon (text-shadow:none) */
   .text-marker-wrap {
     white-space:nowrap;
     user-select:none;
@@ -550,10 +550,12 @@ function buildTextIcon(text, fSize, fColor, fBold, fItalic) {
   var weight = fBold   ? 'bold'   : 'normal';
   var style  = fItalic ? 'italic' : 'normal';
   var css    = style + ' ' + weight + ' ' + fSize + 'px Segoe UI, Arial, sans-serif';
-  // FIX #6: нет text-shadow; FIX #5: cursor:grab через CSS-класс
+  // FIX #6: text-shadow:none в инлайн-стиле гарантированно убивает любую тень
+  // (браузерный дефолт Chromium/WebEngine не может перебить инлайн)
+  // FIX #5: cursor:grab через CSS-класс .text-marker-wrap
   return L.divIcon({
     className: '',
-    html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor + '">' +
+    html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor + ';text-shadow:none">' +
           escapeHtml(text) + '</div>',
     iconAnchor: [0, 0],
     iconSize: null
