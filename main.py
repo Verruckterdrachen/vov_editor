@@ -42,7 +42,7 @@ def save_config(cfg: dict):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
-# ── Диалог ввода API-ключа ──────────────────────────────────
+# ── Диалог ввода API-ключа ──────────────────────────────
 class ApiKeyDialog(QDialog):
     def __init__(self, parent=None, current_key=""):
         super().__init__(parent)
@@ -75,7 +75,7 @@ class ApiKeyDialog(QDialog):
         return self.key_edit.text().strip()
 
 
-# ── Панель инструментов (правая) ────────────────────────────
+# ── Панель инструментов (правая) ────────────────────────
 class ToolButton(QToolButton):
     def __init__(self, text, tooltip, shortcut="", parent=None):
         super().__init__(parent)
@@ -86,7 +86,7 @@ class ToolButton(QToolButton):
         self.setFont(QFont("Segoe UI Emoji", 14))
 
 
-# ── Элемент дерева слоёв ────────────────────────────────────
+# ── Элемент дерева слоёв ──────────────────────────────
 class LayerItem(QTreeWidgetItem):
     def __init__(self, layer_id: str, name: str, is_group=False):
         super().__init__()
@@ -104,7 +104,7 @@ class LayerItem(QTreeWidgetItem):
         self._update_icon()
 
 
-# ── Главное окно ────────────────────────────────────────────
+# ── Главное окно ────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -126,7 +126,6 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_shortcuts()
 
-        # Запрашиваем API-ключ при первом запуске
         if not self.config.get("yandex_api_key"):
             QTimer.singleShot(500, self._ask_api_key)
 
@@ -140,10 +139,8 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # Верхняя панель
         root_layout.addWidget(self._build_topbar())
 
-        # Основная область
         work = QHBoxLayout()
         work.setContentsMargins(0, 0, 0, 0)
         work.setSpacing(0)
@@ -152,7 +149,6 @@ class MainWindow(QMainWindow):
         work.addWidget(self._build_tools_panel())
         root_layout.addLayout(work, stretch=1)
 
-        # Нижняя строка настроек
         root_layout.addWidget(self._build_statusbar())
 
     def _build_topbar(self):
@@ -169,7 +165,7 @@ class MainWindow(QMainWindow):
 
         for txt, tip, slot in [
             ("📂 Открыть",  "Ctrl+O",  self._open_project),
-            ("💾 Сохранить","Ctrl+S",  self._save_project),
+            ("💾 Сохранить","Страница+S (Ctrl+S)",  self._save_project),
             ("📤 Экспорт",  "Ctrl+E",  self._export_png),
             ("🔑 API-ключ", "Настроить ключ Яндекса", self._ask_api_key),
         ]:
@@ -201,7 +197,6 @@ class MainWindow(QMainWindow):
         lbl.setStyleSheet("color:#aaa;font-size:11px;font-weight:bold;")
         lay.addWidget(lbl)
 
-        # Кнопки управления
         btn_row = QHBoxLayout()
         for txt, tip, slot in [
             ("📁", "Добавить группу",  self._add_group),
@@ -215,7 +210,6 @@ class MainWindow(QMainWindow):
             btn_row.addWidget(b)
         lay.addLayout(btn_row)
 
-        # Дерево слоёв
         self.layer_tree = QTreeWidget()
         self.layer_tree.setColumnCount(2)
         self.layer_tree.setHeaderHidden(True)
@@ -234,13 +228,11 @@ class MainWindow(QMainWindow):
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
 
-        # Настройка QWebChannel
         self.channel = QWebChannel()
         self.bridge  = Bridge(self)
         self.channel.registerObject("bridge", self.bridge)
         self.webview.page().setWebChannel(self.channel)
 
-        # Загружаем HTML
         self.webview.load(QUrl.fromLocalFile(MAP_HTML))
         self.webview.loadFinished.connect(self._on_map_loaded)
         return self.webview
@@ -278,14 +270,12 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(8, 4, 8, 4)
         lay.setSpacing(12)
 
-        # Цвет кисти
         self.color_btn = QPushButton("  🎨 Цвет  ")
         self.color_btn.setFixedHeight(32)
         self.color_btn.clicked.connect(self._pick_brush_color)
         self._update_color_button()
         lay.addWidget(self.color_btn)
 
-        # Толщина
         lay.addWidget(QLabel("Толщина:"))
         self.brush_slider = QSlider(Qt.Orientation.Horizontal)
         self.brush_slider.setRange(1, 20)
@@ -298,7 +288,6 @@ class MainWindow(QMainWindow):
 
         lay.addSpacing(8)
 
-        # Ластик
         lay.addWidget(QLabel("Ластик:"))
         self.eraser_slider = QSlider(Qt.Orientation.Horizontal)
         self.eraser_slider.setRange(5, 100)
@@ -311,7 +300,6 @@ class MainWindow(QMainWindow):
 
         lay.addSpacing(8)
 
-        # Шрифт
         lay.addWidget(QLabel("Шрифт:"))
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(8, 72)
@@ -341,19 +329,22 @@ class MainWindow(QMainWindow):
 
         return bar
 
-    # ── Горячие клавиши ────────────────────────────────────
+    # ── Горячие клавиши ───────────────────────────────────────
     def _setup_shortcuts(self):
+        # FIX #7: горячие клавиши теперь работают через JS (см. map.html)
+        # Qt shortcuts оставляем только для случая, когда фокус вне webview
         QShortcut(QKeySequence("V"),      self, lambda: self._set_tool("select"))
         QShortcut(QKeySequence("B"),      self, lambda: self._set_tool("brush"))
         QShortcut(QKeySequence("E"),      self, lambda: self._set_tool("eraser"))
         QShortcut(QKeySequence("T"),      self, lambda: self._set_tool("text"))
-        QShortcut(QKeySequence("Ctrl+S"), self, self._save_project)
         QShortcut(QKeySequence("Ctrl+O"), self, self._open_project)
         QShortcut(QKeySequence("Ctrl+E"), self, self._export_png)
+        # Ctrl+S/Z теперь обрабатывается в JS, но оставляем запасной вариант для Qt
+        QShortcut(QKeySequence("Ctrl+S"), self, self._save_project)
         QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
 
-    # ── Карта загружена ────────────────────────────────────
+    # ── Карта загружена ──────────────────────────────────────────
     def _on_map_loaded(self, ok):
         if not ok:
             self.status_lbl.setText("Ошибка загрузки карты!")
@@ -362,7 +353,7 @@ class MainWindow(QMainWindow):
         self._js(f'initMap("{api_key}");')
         self.status_lbl.setText("Карта загружена")
 
-    # ── Смена инструмента ──────────────────────────────────
+    # ── Смена инструмента ──────────────────────────────────────
     def _set_tool(self, tool: str):
         self._current_tool = tool
         for tid, btn in self.tool_buttons.items():
@@ -386,7 +377,7 @@ class MainWindow(QMainWindow):
         self._js(f"setTool({params});")
         self.status_lbl.setText(f"Инструмент: {tool}")
 
-    # ── Слои ───────────────────────────────────────────────
+    # ── Слои ──────────────────────────────────────────────────────
     def _add_group(self):
         name, ok = QInputDialog.getText(self, "Новая группа", "Название группы (например: 1941):")
         if not ok or not name:
@@ -457,7 +448,7 @@ class MainWindow(QMainWindow):
         for i in range(item.childCount()):
             self._clear_highlight(item.child(i))
 
-    # ── Настройки инструментов ─────────────────────────────
+    # ── Настройки инструментов ─────────────────────────────────
     def _pick_brush_color(self):
         c = QColorDialog.getColor(QColor(self._brush_color), self, "Цвет кисти")
         if c.isValid():
@@ -499,14 +490,14 @@ class MainWindow(QMainWindow):
         self._font_italic = bool(state)
         self._js(f"setFontItalic({str(self._font_italic).lower()});")
 
-    # ── Смена тайлового слоя ───────────────────────────────
+    # ── Смена тайлового слоя ─────────────────────────────────────
     def _change_tile_layer(self, idx):
         types = ["map", "sat", "skl"]
         t = types[idx]
         key = self.config.get("yandex_api_key", "")
         self._js(f'changeTileLayer("{t}", "{key}");')
 
-    # ── Импорт изображения ────────────────────────────────
+    # ── Импорт изображения ─────────────────────────────────────
     def _import_image(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Выбрать изображение", "", "Images (*.png *.jpg *.jpeg *.bmp)"
@@ -516,7 +507,7 @@ class MainWindow(QMainWindow):
         path_js = path.replace("\\", "/")
         self._js(f'importImage("file:///{path_js}");')
 
-    # ── Сохранение / открытие ─────────────────────────────
+    # ── Сохранение / открытие ─────────────────────────────────
     def _save_project(self):
         if not self._current_project_path:
             path, _ = QFileDialog.getSaveFileName(
@@ -525,7 +516,12 @@ class MainWindow(QMainWindow):
             if not path:
                 return
             self._current_project_path = path
-        self._js(f'saveProject("{self._current_project_path.replace(chr(92), "/")}");')
+            # FIX #7: сообщаем путь в JS чтобы Ctrl+S в браузере знал куда сохранять
+            safe_path = self._current_project_path.replace("\\", "/")
+            self._js(f'setProjectPath("{safe_path}");')
+        safe_path = self._current_project_path.replace("\\", "/")
+        self._js(f'saveProject("{safe_path}");')
+        self.project_label.setText(os.path.basename(self._current_project_path))
 
     def _open_project(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -534,6 +530,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self._current_project_path = path
+        # Передаём путь в JS
+        safe_path = path.replace("\\", "/")
+        self._js(f'setProjectPath("{safe_path}");')
         with open(path, "r", encoding="utf-8") as f:
             data = f.read()
         data_js = json.dumps(data)
@@ -542,7 +541,6 @@ class MainWindow(QMainWindow):
         self._rebuild_layer_tree_from_js()
 
     def _rebuild_layer_tree_from_js(self):
-        # JS вернёт данные через bridge.onLayersLoaded
         self._js("sendLayersToQt();")
 
     def _export_png(self):
@@ -553,14 +551,14 @@ class MainWindow(QMainWindow):
             path_js = path.replace("\\", "/")
             self._js(f'exportPNG("{path_js}");')
 
-    # ── Отмена / удаление ─────────────────────────────────
+    # ── Отмена / удаление ──────────────────────────────────────
     def _undo(self):
         self._js("undoAction();")
 
     def _delete_selected(self):
         self._js("deleteSelected();")
 
-    # ── API-ключ ──────────────────────────────────────────
+    # ── API-ключ ────────────────────────────────────────────────────
     def _ask_api_key(self):
         dlg = ApiKeyDialog(self, self.config.get("yandex_api_key", ""))
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -569,13 +567,13 @@ class MainWindow(QMainWindow):
             save_config(self.config)
             self._js(f'initMap("{key}");')
 
-    # ── Вспомогательный вызов JS ──────────────────────────
+    # ── Вспомогательный вызов JS ────────────────────────────
     def _js(self, code: str):
         self.webview.page().runJavaScript(code)
 
-    # ── Принять данные слоёв от JS ────────────────────────
+    # ── Принять данные слоёв от JS ───────────────────────────
     def receive_layers(self, layers_json: str):
-        """Вызывается из bridge.py когда JS передаёт список слоёв."""
+        """Called from bridge.py when JS sends layer tree."""
         try:
             layers = json.loads(layers_json)
             self.layer_tree.clear()
@@ -590,10 +588,14 @@ class MainWindow(QMainWindow):
             self.status_lbl.setText(f"Ошибка загрузки слоёв: {e}")
 
     def on_js_status(self, msg: str):
+        # FIX #7: JS шлёт специальный сигнал, когда путь не задан (Ctrl+S в JS)
+        if msg == "__SAVE_DIALOG__":
+            self._save_project()
+            return
         self.status_lbl.setText(msg)
 
 
-# ── Тёмная тема ──────────────────────────────────────────────
+# ── Тёмная тема ─────────────────────────────────────────────────────────────
 DARK_STYLE = """
 QWidget { background:#1e1e1e; color:#e0e0e0; font-family:'Segoe UI'; font-size:12px; }
 QMainWindow { background:#1e1e1e; }
