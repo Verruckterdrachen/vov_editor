@@ -105,6 +105,16 @@ class LayerItem(QTreeWidgetItem):
         self._update_icon()
 
 
+# ── QTreeWidget с перехватом dropEvent ────────────────
+class LayerTree(QTreeWidget):
+    """QTreeWidget с сигналом об изменении порядка слоёв после drag-and-drop."""
+    orderChanged = pyqtSignal()
+
+    def dropEvent(self, event):
+        super().dropEvent(event)
+        self.orderChanged.emit()
+
+
 # ── Главное окно ────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -199,7 +209,9 @@ class MainWindow(QMainWindow):
             b.clicked.connect(slot)
             btn_row.addWidget(b)
         lay.addLayout(btn_row)
-        self.layer_tree = QTreeWidget()
+
+        # FIX #3: используем подкласс LayerTree вместо QTreeWidget
+        self.layer_tree = LayerTree()
         self.layer_tree.setColumnCount(2)
         self.layer_tree.setHeaderHidden(True)
         self.layer_tree.setColumnWidth(0, 190)
@@ -207,6 +219,8 @@ class MainWindow(QMainWindow):
         self.layer_tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
         self.layer_tree.itemClicked.connect(self._on_layer_clicked)
         self.layer_tree.itemDoubleClicked.connect(self._on_layer_double_clicked)
+        # FIX #3: подписываемся на сигнал изменения порядка
+        self.layer_tree.orderChanged.connect(self._on_layer_order_changed)
         lay.addWidget(self.layer_tree)
         return panel
 
@@ -312,6 +326,12 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
 
+    # ── Вспомогательный метод логирования в JS-панель ──────
+    def _js_log(self, msg: str):
+        """Пишет сообщение в debug-лог JS (Ctrl+` для показа)."""
+        safe = msg.replace("\\", "\\\\").replace("'", "\\'")
+        self._js(f"log('[PY] {safe}');")
+
     def _on_map_loaded(self, ok):
         if not ok:
             self.status_lbl.setText("Ошибка загрузки карты!")
@@ -320,6 +340,7 @@ class MainWindow(QMainWindow):
         # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
         self._js(f'initMap({json.dumps(api_key)});')
         self.status_lbl.setText("Карта загружена")
+        self._js_log("App started, map loaded")
 
     def _set_tool(self, tool: str):
         self._current_tool = tool
@@ -341,6 +362,7 @@ class MainWindow(QMainWindow):
         })
         self._js(f"setTool({params});")
         self.status_lbl.setText(f"Инструмент: {tool}")
+        self._js_log(f"Tool selected: {tool}")
 
     def _add_group(self):
         name, ok = QInputDialog.getText(self, "Новая группа", "Название группы:")
@@ -350,6 +372,7 @@ class MainWindow(QMainWindow):
         item = LayerItem(lid, name, is_group=True)
         self.layer_tree.addTopLevelItem(item)
         self._js(f'addLayerGroup("{lid}", {json.dumps(name)});')
+        self._js_log(f"Group added: '{name}' id={lid}")
 
     def _add_layer(self):
         name, ok = QInputDialog.getText(self, "Новый слой", "Название слоя:")
@@ -365,31 +388,38 @@ class MainWindow(QMainWindow):
             self.layer_tree.addTopLevelItem(item)
         self._activate_layer(item)
         self._js(f'addLayer("{lid}", {json.dumps(name)});')
+        self._js_log(f"Layer added: '{name}' id={lid}")
 
     def _delete_layer(self):
         item = self.layer_tree.currentItem()
         if not item or not isinstance(item, LayerItem): return
         lid = item.layer_id
+        name = item.text(0)
         root = self.layer_tree.invisibleRootItem()
         parent = item.parent() or root
         parent.removeChild(item)
         self._js(f'removeLayer("{lid}");')
         self._active_layer_id = None
+        self._js_log(f"Layer deleted: '{name}' id={lid}")
 
     def _on_layer_clicked(self, item, col):
         if not isinstance(item, LayerItem): return
         if col == 1:
             item.toggle_visibility()
-            self._js(f'setLayerVisible("{item.layer_id}", {str(item.visible).lower()});')
+            vis = item.visible
+            self._js(f'setLayerVisible("{item.layer_id}", {str(vis).lower()});')
+            self._js_log(f"Layer visibility: '{item.text(0)}' -> {vis}")
         else:
             if not item.is_group: self._activate_layer(item)
 
     def _on_layer_double_clicked(self, item, col):
         if not isinstance(item, LayerItem): return
-        name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:", text=item.text(0))
+        old_name = item.text(0)
+        name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:", text=old_name)
         if ok and name:
             item.setText(0, name)
             self._js(f'renameLayer("{item.layer_id}", {json.dumps(name)});')
+            self._js_log(f"Layer renamed: '{old_name}' -> '{name}'")
 
     def _activate_layer(self, item: LayerItem):
         self._active_layer_id = item.layer_id
@@ -399,6 +429,7 @@ class MainWindow(QMainWindow):
         item.setBackground(1, QColor("#1a5276"))
         self._js(f'setActiveLayer("{item.layer_id}");')
         self.status_lbl.setText(f"Активный слой: {item.text(0)}")
+        self._js_log(f"Active layer: '{item.text(0)}' id={item.layer_id}")
 
     def _clear_highlight(self, item):
         item.setBackground(0, QColor("transparent"))
@@ -406,12 +437,30 @@ class MainWindow(QMainWindow):
         for i in range(item.childCount()):
             self._clear_highlight(item.child(i))
 
+    # FIX #3: синхронизация порядка слоёв после drag-and-drop
+    def _on_layer_order_changed(self):
+        """Собирает плоский список ID слоёв из дерева и отправляет в JS."""
+        order = []
+        root = self.layer_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            top = root.child(i)
+            if isinstance(top, LayerItem):
+                order.append(top.layer_id)
+                for j in range(top.childCount()):
+                    child = top.child(j)
+                    if isinstance(child, LayerItem):
+                        order.append(child.layer_id)
+        order_json = json.dumps(order)
+        self._js(f'reorderLayers({order_json});')
+        self._js_log(f"Layer order changed: {order}")
+
     def _pick_brush_color(self):
         c = QColorDialog.getColor(QColor(self._brush_color), self, "Цвет кисти")
         if c.isValid():
             self._brush_color = c.name()
             self._update_color_button()
             self._js(f'setBrushColor("{self._brush_color}");')
+            self._js_log(f"Brush color: {self._brush_color}")
 
     def _update_color_button(self):
         self.color_btn.setStyleSheet(
@@ -423,35 +472,43 @@ class MainWindow(QMainWindow):
         self._brush_size = v
         self.brush_size_lbl.setText(str(v))
         self._js(f"setBrushSize({v});")
+        self._js_log(f"Brush size: {v}")
 
     def _on_eraser_size_changed(self, v):
         self._eraser_size = v
         self.eraser_size_lbl.setText(str(v))
         self._js(f"setEraserSize({v});")
+        self._js_log(f"Eraser size: {v}")
 
     def _on_font_size_changed(self, v):
         self._font_size = v
         self._js(f"setFontSize({v});")
+        self._js_log(f"Font size: {v}")
 
     def _pick_font_color(self):
         c = QColorDialog.getColor(QColor(self._font_color), self, "Цвет текста")
         if c.isValid():
             self._font_color = c.name()
             self._js(f'setFontColor("{self._font_color}");')
+            self._js_log(f"Font color: {self._font_color}")
 
     def _on_font_bold_changed(self, state):
         self._font_bold = bool(state)
         self._js(f"setFontBold({str(self._font_bold).lower()});")
+        self._js_log(f"Font bold: {self._font_bold}")
 
     def _on_font_italic_changed(self, state):
         self._font_italic = bool(state)
         self._js(f"setFontItalic({str(self._font_italic).lower()});")
+        self._js_log(f"Font italic: {self._font_italic}")
 
     def _change_tile_layer(self, idx):
         types = ["map", "sat", "skl"]
+        names = ["Схема", "Спутник", "Гибрид"]
         key = self.config.get("yandex_api_key", "")
         # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
         self._js(f'changeTileLayer("{types[idx]}", {json.dumps(key)});')
+        self._js_log(f"Tile layer: {names[idx]}")
 
     def _import_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -460,6 +517,7 @@ class MainWindow(QMainWindow):
         if not path: return
         path_js = path.replace("\\", "/")
         self._js(f'importImage("file:///{path_js}");')
+        self._js_log(f"Image imported: {os.path.basename(path)}")
 
     def _save_project(self):
         if not self._current_project_path:
@@ -473,6 +531,7 @@ class MainWindow(QMainWindow):
         safe_path = self._current_project_path.replace("\\", "/")
         self._js(f'saveProject("{safe_path}");')
         self.project_label.setText(os.path.basename(self._current_project_path))
+        self._js_log(f"Project save requested: {os.path.basename(self._current_project_path)}")
 
     def _open_project(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -487,17 +546,21 @@ class MainWindow(QMainWindow):
         self._js(f"loadProject({json.dumps(data)});")
         self.project_label.setText(os.path.basename(path))
         self._js("sendLayersToQt();")
+        self._js_log(f"Project opened: {os.path.basename(path)}")
 
     def _export_png(self):
         path, _ = QFileDialog.getSaveFileName(self, "Экспорт PNG", "export.png", "PNG (*.png)")
         if path:
             self._js(f'exportPNG("{path.replace(chr(92), "/")}");')
+            self._js_log(f"Export PNG: {os.path.basename(path)}")
 
     def _undo(self):
         self._js("undoAction();")
+        self._js_log("Undo requested")
 
     def _delete_selected(self):
         self._js("deleteSelected();")
+        self._js_log("Delete selected requested")
 
     def _ask_api_key(self):
         dlg = ApiKeyDialog(self, self.config.get("yandex_api_key", ""))
@@ -507,6 +570,7 @@ class MainWindow(QMainWindow):
             save_config(self.config)
             # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
             self._js(f'initMap({json.dumps(key)});')
+            self._js_log(f"API key updated (len={len(key)})")
 
     def _js(self, code: str):
         self.webview.page().runJavaScript(code)
@@ -522,8 +586,10 @@ class MainWindow(QMainWindow):
                     l_item = LayerItem(lyr["id"], lyr["name"])
                     g_item.addChild(l_item)
                 g_item.setExpanded(True)
+            self._js_log(f"Layers tree rebuilt: {len(layers)} top-level items")
         except Exception as e:
             self.status_lbl.setText(f"Ошибка загрузки слоёв: {e}")
+            self._js_log(f"ERROR receive_layers: {e}")
 
     def on_js_status(self, msg: str):
         # JS шлёт спецсигналы:
