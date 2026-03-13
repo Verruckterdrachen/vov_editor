@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         self._font_color           = "#ffffff"
         self._font_bold            = False
         self._font_italic          = False
+        self._export_path          = None   # используется при экспорте
 
         self._setup_ui()
         self._setup_shortcuts()
@@ -210,7 +211,6 @@ class MainWindow(QMainWindow):
             btn_row.addWidget(b)
         lay.addLayout(btn_row)
 
-        # FIX #3: используем подкласс LayerTree вместо QTreeWidget
         self.layer_tree = LayerTree()
         self.layer_tree.setColumnCount(2)
         self.layer_tree.setHeaderHidden(True)
@@ -219,7 +219,6 @@ class MainWindow(QMainWindow):
         self.layer_tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
         self.layer_tree.itemClicked.connect(self._on_layer_clicked)
         self.layer_tree.itemDoubleClicked.connect(self._on_layer_double_clicked)
-        # FIX #3: подписываемся на сигнал изменения порядка
         self.layer_tree.orderChanged.connect(self._on_layer_order_changed)
         lay.addWidget(self.layer_tree)
         return panel
@@ -337,7 +336,6 @@ class MainWindow(QMainWindow):
             self.status_lbl.setText("Ошибка загрузки карты!")
             return
         api_key = self.config.get("yandex_api_key", "")
-        # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
         self._js(f'initMap({json.dumps(api_key)});')
         self.status_lbl.setText("Карта загружена")
         self._js_log("App started, map loaded")
@@ -367,7 +365,6 @@ class MainWindow(QMainWindow):
     def _add_group(self):
         name, ok = QInputDialog.getText(self, "Новая группа", "Название группы:")
         if not ok or not name: return
-        # FIX #1: стабильный UUID вместо id(name)
         lid = f"group_{uuid.uuid4().hex[:8]}"
         item = LayerItem(lid, name, is_group=True)
         self.layer_tree.addTopLevelItem(item)
@@ -377,7 +374,6 @@ class MainWindow(QMainWindow):
     def _add_layer(self):
         name, ok = QInputDialog.getText(self, "Новый слой", "Название слоя:")
         if not ok or not name: return
-        # FIX #1: стабильный UUID вместо id(name)
         lid = f"layer_{uuid.uuid4().hex[:8]}"
         item = LayerItem(lid, name)
         selected = self.layer_tree.currentItem()
@@ -437,9 +433,7 @@ class MainWindow(QMainWindow):
         for i in range(item.childCount()):
             self._clear_highlight(item.child(i))
 
-    # FIX #3: синхронизация порядка слоёв после drag-and-drop
     def _on_layer_order_changed(self):
-        """Собирает плоский список ID слоёв из дерева и отправляет в JS."""
         order = []
         root = self.layer_tree.invisibleRootItem()
         for i in range(root.childCount()):
@@ -450,8 +444,7 @@ class MainWindow(QMainWindow):
                     child = top.child(j)
                     if isinstance(child, LayerItem):
                         order.append(child.layer_id)
-        order_json = json.dumps(order)
-        self._js(f'reorderLayers({order_json});')
+        self._js(f'reorderLayers({json.dumps(order)});')
         self._js_log(f"Layer order changed: {order}")
 
     def _pick_brush_color(self):
@@ -506,7 +499,6 @@ class MainWindow(QMainWindow):
         types = ["map", "sat", "skl"]
         names = ["Схема", "Спутник", "Гибрид"]
         key = self.config.get("yandex_api_key", "")
-        # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
         self._js(f'changeTileLayer("{types[idx]}", {json.dumps(key)});')
         self._js_log(f"Tile layer: {names[idx]}")
 
@@ -548,11 +540,49 @@ class MainWindow(QMainWindow):
         self._js("sendLayersToQt();")
         self._js_log(f"Project opened: {os.path.basename(path)}")
 
+    # ── Экспорт PNG ────────────────────────────────────────
     def _export_png(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Экспорт PNG", "export.png", "PNG (*.png)")
-        if path:
-            self._js(f'exportPNG("{path.replace(chr(92), "/")}");')
-            self._js_log(f"Export PNG: {os.path.basename(path)}")
+        """Экспорт видимой области карты через QWebEngineView.grab().
+        Алгоритм:
+          1. Диалог выбора пути
+          2. JS скрывает UI Leaflet (кнопки зума, атрибуция, debug-лог)
+          3. QTimer 150мс — ждём перерисовку WebEngine
+          4. grab() → QPixmap → сохранить PNG
+          5. JS восстанавливает UI
+        """
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Экспорт PNG", "export.png", "PNG (*.png)"
+        )
+        if not path:
+            return
+        self._export_path = path
+        self.status_lbl.setText("Подготовка экспорта...")
+        self._js_log(f"Export PNG started: {os.path.basename(path)}")
+        # Шаг 1: скрываем Leaflet UI
+        self._js("hideMapUI();")
+        # Шаг 2: даём WebEngine время перерисоваться
+        QTimer.singleShot(150, self._do_grab)
+
+    def _do_grab(self):
+        """Выполняет grab() и сохраняет файл, затем восстанавливает UI."""
+        path = self._export_path
+        try:
+            pixmap = self.webview.grab()
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            saved = pixmap.save(path, "PNG")
+            if saved:
+                self.status_lbl.setText(f"Экспорт сохранён: {os.path.basename(path)}")
+                self._js_log(f"Export PNG saved OK: {path}")
+            else:
+                self.status_lbl.setText("Ошибка сохранения PNG")
+                self._js_log(f"Export PNG FAILED: pixmap.save() returned False")
+        except Exception as e:
+            self.status_lbl.setText(f"Ошибка экспорта: {e}")
+            self._js_log(f"Export PNG ERROR: {e}")
+        finally:
+            # Шаг 3: всегда восстанавливаем UI
+            self._js("showMapUI();")
+            self._export_path = None
 
     def _undo(self):
         self._js("undoAction();")
@@ -568,7 +598,6 @@ class MainWindow(QMainWindow):
             key = dlg.get_key()
             self.config["yandex_api_key"] = key
             save_config(self.config)
-            # FIX #2: json.dumps безопасно экранирует спецсимволы в ключе
             self._js(f'initMap({json.dumps(key)});')
             self._js_log(f"API key updated (len={len(key)})")
 
@@ -592,11 +621,9 @@ class MainWindow(QMainWindow):
             self._js_log(f"ERROR receive_layers: {e}")
 
     def on_js_status(self, msg: str):
-        # JS шлёт спецсигналы:
         if msg == "__SAVE_DIALOG__":
             self._save_project()
             return
-        # Авто-переключение на Select после текста
         if msg == "__SWITCH_SELECT__":
             self._set_tool("select")
             return

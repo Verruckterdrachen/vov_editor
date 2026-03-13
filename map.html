@@ -26,7 +26,6 @@
     display:none;
   }
   #debug-log.visible { display:block; }
-  /* Python-side события выделяем голубым */
   #debug-log .py-log { color:#4fc3f7; }
 
   .obj-tooltip { background:#222; color:#eee; border:1px solid #555;
@@ -41,11 +40,15 @@
     display: inline-block;
   }
 
-  /* Курсоры по инструменту */
   body.tool-brush  #map { cursor: crosshair; }
   body.tool-eraser #map { cursor: none; }
   body.tool-text   #map { cursor: text; }
   body.tool-select #map { cursor: default; }
+
+  /* Скрытие UI при экспорте */
+  body.exporting .leaflet-control-container { display: none !important; }
+  body.exporting #debug-log                 { display: none !important; }
+  body.exporting #eraser-cursor             { display: none !important; }
 </style>
 </head>
 <body class="tool-select">
@@ -74,7 +77,6 @@ function log(msg) {
   var text = '[' + ts + '] ' + msg;
   console.log(text);
   var line = document.createElement('div');
-  // Python-события помечаем голубым
   if (msg.indexOf('[PY]') === 0) line.className = 'py-log';
   line.textContent = text;
   debugEl.appendChild(line);
@@ -88,6 +90,18 @@ document.addEventListener('keydown', function(e) {
     debugEl.classList.toggle('visible', debugVisible);
   }
 });
+
+// ═══════════════════════════════════════════════════════════
+//   ЭКСПОРТ: скрыть / показать Leaflet UI
+// ═══════════════════════════════════════════════════════════
+function hideMapUI() {
+  document.body.classList.add('exporting');
+  log('Export: UI hidden');
+}
+function showMapUI() {
+  document.body.classList.remove('exporting');
+  log('Export: UI restored');
+}
 
 // ═══════════════════════════════════════════════════════════
 //   ГЛОБАЛЬНОЕ СОСТОЯНИЕ
@@ -241,14 +255,11 @@ function renameLayer(id, name) {
   }
 }
 
-// FIX #3: синхронизация порядка слоёв после drag-and-drop в Qt
 function reorderLayers(ids) {
-  // Перестраиваем layerOrder согласно новому порядку из Qt-дерева
   var newOrder = [];
   ids.forEach(function(id) {
     if (layers[id]) newOrder.push(id);
   });
-  // Добавляем слои которые могут отсутствовать в дереве
   layerOrder.forEach(function(id) {
     if (newOrder.indexOf(id) === -1) newOrder.push(id);
   });
@@ -726,11 +737,6 @@ function restoreObject(obj, layerId) {
     lyr.objects.push(iObj);
   }
 }
-
-// ═══════════════════════════════════════════════════════════
-//   ЭКСПОРТ
-// ═══════════════════════════════════════════════════════════
-function exportPNG(path) { notifyStatus('Для экспорта используйте кнопку "Экспорт" сверху'); }
 
 // ═══════════════════════════════════════════════════════════
 //   ДЕРЕВО СЛОЁВ
