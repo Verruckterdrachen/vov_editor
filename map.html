@@ -1,899 +1,990 @@
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Карта ВОВ</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; height:100%; background:#1a1a2e; overflow:hidden; }
-  #map { width:100%; height:100%; }
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Карта ВОВ</title>
+	<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
 
-  #eraser-cursor {
-    position:fixed; border:2px solid rgba(255,100,100,0.9);
-    border-radius:50%; pointer-events:none; display:none;
-    transform:translate(-50%,-50%); z-index:9999;
-    background:rgba(255,100,100,0.15);
-  }
+		html,
+		body {
+			width: 100%;
+			height: 100%;
+			background: #1a1a2e;
+			overflow: hidden;
+		}
 
-  /* FIX лог: pointer-events:auto + user-select:text — текст можно выделить и скопировать */
-  #debug-log {
-    position:fixed; bottom:0; left:0; right:0;
-    max-height:200px; overflow-y:auto;
-    background:rgba(0,0,0,0.88); color:#0f0;
-    font:11px monospace; padding:4px 8px;
-    z-index:10000;
-    pointer-events:auto;
-    user-select:text;
-    -webkit-user-select:text;
-    display:none;
-  }
-  #debug-log.visible { display:block; }
-  #debug-log .py-log { color:#4fc3f7; }
+		#map {
+			width: 100%;
+			height: 100%;
+		}
 
-  /* Кнопка копирования лога */
-  #debug-copy-btn {
-    position:fixed; bottom:4px; right:8px;
-    z-index:10001; padding:2px 8px;
-    background:#333; color:#0f0; border:1px solid #0f0;
-    border-radius:3px; font:11px monospace; cursor:pointer;
-    display:none;
-  }
-  #debug-log.visible ~ #debug-copy-btn { display:block; }
+		#eraser-cursor {
+			position: fixed;
+			border: 2px solid rgba(255, 100, 100, 0.9);
+			border-radius: 50%;
+			pointer-events: none;
+			display: none;
+			transform: translate(-50%, -50%);
+			z-index: 9999;
+			background: rgba(255, 100, 100, 0.15);
+		}
 
-  .obj-tooltip { background:#222; color:#eee; border:1px solid #555;
-                  font-size:11px; padding:2px 6px; border-radius:3px; }
-  .selected-path { filter: drop-shadow(0 0 6px #00aaff); }
+		/* FIX лог: pointer-events:auto + user-select:text — текст можно выделить и скопировать */
+		#debug-log {
+			position: fixed;
+			bottom: 0;
+			left: 0;
+			right: 0;
+			max-height: 200px;
+			overflow-y: auto;
+			background: rgba(0, 0, 0, 0.88);
+			color: #0f0;
+			font: 11px monospace;
+			padding: 4px 8px;
+			z-index: 10000;
+			pointer-events: auto;
+			user-select: text;
+			-webkit-user-select: text;
+			display: none;
+		}
 
-  /* FIX #6: text-shadow убирается инлайн в buildTextIcon (text-shadow:none) */
-  .text-marker-wrap {
-    white-space:nowrap;
-    user-select:none;
-    transform: translate(-50%, -50%);
-    display: inline-block;
-  }
+		#debug-log.visible {
+			display: block;
+		}
 
-  /* FIX #4: курсор «палец» в режиме select */
-  body.tool-select #map { cursor: pointer; }
-  body.tool-brush  #map { cursor: crosshair; }
-  body.tool-eraser #map { cursor: none; }
-  body.tool-text   #map { cursor: text; }
+		#debug-log .py-log {
+			color: #4fc3f7;
+		}
 
-  /* FIX #5: курсор при перетаскивании текстового маркера */
-  .text-marker-wrap { cursor: grab; }
-  .text-marker-wrap:active { cursor: grabbing; }
+		/* Кнопка копирования лога */
+		#debug-copy-btn {
+			position: fixed;
+			bottom: 4px;
+			right: 8px;
+			z-index: 10001;
+			padding: 2px 8px;
+			background: #333;
+			color: #0f0;
+			border: 1px solid #0f0;
+			border-radius: 3px;
+			font: 11px monospace;
+			cursor: pointer;
+			display: none;
+		}
 
-  /* Скрытие UI при экспорте */
-  body.exporting .leaflet-control-container { display: none !important; }
-  body.exporting #debug-log                 { display: none !important; }
-  body.exporting #debug-copy-btn            { display: none !important; }
-  body.exporting #eraser-cursor             { display: none !important; }
+		#debug-log.visible~#debug-copy-btn {
+			display: block;
+		}
 
-  /* Пробел-drag: временный курсор */
-  body.space-pan #map { cursor: grab !important; }
-  body.space-pan.panning #map { cursor: grabbing !important; }
-</style>
+		.obj-tooltip {
+			background: #222;
+			color: #eee;
+			border: 1px solid #555;
+			font-size: 11px;
+			padding: 2px 6px;
+			border-radius: 3px;
+		}
+
+		.selected-path {
+			filter: drop-shadow(0 0 6px #00aaff);
+		}
+
+		/* FIX #6: text-shadow убирается инлайн в buildTextIcon (text-shadow:none) */
+		.text-marker-wrap {
+			white-space: nowrap;
+			user-select: none;
+			display: inline-block;
+			transform: translate(-50%, -50%);
+		}
+
+		/* FIX #4: курсор «палец» в режиме select */
+		body.tool-select #map {
+			cursor: pointer;
+		}
+
+		body.tool-brush #map {
+			cursor: crosshair;
+		}
+
+		body.tool-eraser #map {
+			cursor: none;
+		}
+
+		body.tool-text #map {
+			cursor: text;
+		}
+
+		/* FIX #5: курсор при перетаскивании текстового маркера */
+		.text-marker-wrap {
+			cursor: grab;
+		}
+
+		.text-marker-wrap:active {
+			cursor: grabbing;
+		}
+
+		/* Скрытие UI при экспорте */
+		body.exporting .leaflet-control-container {
+			display: none !important;
+		}
+
+		body.exporting #debug-log {
+			display: none !important;
+		}
+
+		body.exporting #debug-copy-btn {
+			display: none !important;
+		}
+
+		body.exporting #eraser-cursor {
+			display: none !important;
+		}
+
+		/* Пробел-drag: временный курсор */
+		body.space-pan #map {
+			cursor: grab !important;
+		}
+
+		body.space-pan.panning #map {
+			cursor: grabbing !important;
+		}
+	</style>
 </head>
+
 <body class="tool-select">
 
-<div id="map"></div>
-<div id="eraser-cursor"></div>
-<div id="debug-log"></div>
-<button id="debug-copy-btn" title="Копировать лог">📋 Копировать</button>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
-<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-
-<script>
-// ═══════════════════════════════════════════════════════════
-//   ЛОГГЕР  (Ctrl+` — показать/скрыть)
-// ═══════════════════════════════════════════════════════════
-var debugEl      = document.getElementById('debug-log');
-var debugCopyBtn = document.getElementById('debug-copy-btn');
-var debugVisible = false;
-
-function log(msg) {
-  var ts   = new Date().toTimeString().slice(0,8);
-  var text = '[' + ts + '] ' + msg;
-  console.log(text);
-  var line = document.createElement('div');
-  if (msg.indexOf('[PY]') === 0) line.className = 'py-log';
-  line.textContent = text;
-  debugEl.appendChild(line);
-  debugEl.scrollTop = debugEl.scrollHeight;
-  while (debugEl.children.length > 300) debugEl.removeChild(debugEl.firstChild);
-}
-
-document.addEventListener('keydown', function(e) {
-  if (e.ctrlKey && e.key === '`') {
-    debugVisible = !debugVisible;
-    debugEl.classList.toggle('visible', debugVisible);
-    debugCopyBtn.style.display = debugVisible ? 'block' : 'none';
-  }
-});
-
-// BUG-LOG fix: кнопка копирования лога
-debugCopyBtn.addEventListener('click', function() {
-  var text = Array.from(debugEl.children).map(function(el){ return el.textContent; }).join('\n');
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(function() {
-      debugCopyBtn.textContent = '✅ Скопировано';
-      setTimeout(function(){ debugCopyBtn.textContent = '📋 Копировать'; }, 1500);
-    });
-  } else {
-    // fallback: выделить весь текст лога
-    var range = document.createRange();
-    range.selectNodeContents(debugEl);
-    var sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-});
-
-// ═══════════════════════════════════════════════════════════
-//   ЭКСПОРТ: скрыть / показать Leaflet UI
-// ═══════════════════════════════════════════════════════════
-function hideMapUI() {
-  document.body.classList.add('exporting');
-  log('Export: UI hidden');
-}
-function showMapUI() {
-  document.body.classList.remove('exporting');
-  log('Export: UI restored');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ГЛОБАЛЬНОЕ СОСТОЯНИЕ
-// ═══════════════════════════════════════════════════════════
-var map;
-var bridge = null;
-var activeTool    = 'select';
-var activeLayerId = null;
-var currentProjectPath = '';
-
-var brushColor = '#ff0000';
-var brushSize  = 4;
-var eraserSize = 20;
-var fontSize   = 14;
-var fontColor  = '#ffffff';
-var fontBold   = false;
-var fontItalic = false;
-
-var layers    = {};
-var layerOrder = [];
-
-var history     = [];
-var MAX_HISTORY = 50;
-
-var selectedObj = null;
-
-var isDrawing       = false;
-var currentPath     = null;
-var currentPolyline = null;
-
-var isErasing      = false;
-var eraserPath     = [];
-var eraserCursorEl = document.getElementById('eraser-cursor');
-
-var tileLayer       = null;
-var currentTileType = 'map';
-var yandexApiKey    = '';
-
-// ═══════════════════════════════════════════════════════════
-//   ПРОБЕЛ — временный pan (как в Photoshop)
-// ═══════════════════════════════════════════════════════════
-var spaceDown = false;
-
-document.addEventListener('keydown', function(e) {
-  if (e.code === 'Space' && !e.ctrlKey && !e.altKey && activeTool !== 'select') {
-    if (spaceDown) return;
-    spaceDown = true;
-    e.preventDefault();
-    map.dragging.enable();
-    document.body.classList.add('space-pan');
-    log('Space pan: ON');
-  }
-});
-document.addEventListener('keyup', function(e) {
-  if (e.code === 'Space' && spaceDown) {
-    spaceDown = false;
-    document.body.classList.remove('space-pan', 'panning');
-    if (activeTool !== 'select') map.dragging.disable();
-    log('Space pan: OFF');
-  }
-});
-
-// ═══════════════════════════════════════════════════════════
-//   ГОРЯЧИЕ КЛАВИШИ
-// ═══════════════════════════════════════════════════════════
-document.addEventListener('keydown', function(e) {
-  // FIX #8: Ctrl+Z убран, Python-сторона обрабатывает через QShortcut
-  if (e.ctrlKey && e.key === 's') {
-    e.preventDefault();
-    if (currentProjectPath) {
-      saveProject(currentProjectPath);
-    } else {
-      if (bridge) bridge.onStatus('__SAVE_DIALOG__');
-    }
-  }
-  if (e.key === 'Delete' || e.key === 'Backspace') {
-    deleteSelected();
-  }
-});
-
-function setProjectPath(path) {
-  currentProjectPath = path;
-  log('Project path set: ' + path);
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ИНИЦИАЛИЗАЦИЯ
-// ═══════════════════════════════════════════════════════════
-function initMap(apiKey) {
-  yandexApiKey = apiKey || '';
-  if (map) { changeTileLayer(currentTileType, yandexApiKey); return; }
-
-  map = L.map('map', { center:[55.0,32.0], zoom:5, zoomControl:true, preferCanvas:false });
-  map.getContainer().style.background = '#1a1a2e';
-  changeTileLayer('map', yandexApiKey);
-
-  map.on('mousedown', onMapMouseDown);
-  map.on('mousemove', onMapMouseMove);
-  map.on('mouseup',   onMapMouseUp);
-
-  map.on('dragstart', function() { document.body.classList.add('panning'); });
-  map.on('dragend',   function() { document.body.classList.remove('panning'); });
-
-  createLayer('layer_default', 'Слой 1');
-  setActiveLayer('layer_default');
-
-  new QWebChannel(qt.webChannelTransport, function(channel) {
-    bridge = channel.objects.bridge;
-    log('Bridge ready');
-    bridge.onStatus('Карта готова');
-  });
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ТАЙЛЫ
-// ═══════════════════════════════════════════════════════════
-function changeTileLayer(type, apiKey) {
-  currentTileType = type;
-  if (apiKey) yandexApiKey = apiKey;
-  if (tileLayer) map.removeLayer(tileLayer);
-  var urlTemplates = {
-    'map': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=map&x={x}&y={y}&z={z}&lang=ru_RU',
-    'sat': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=sat&x={x}&y={y}&z={z}&lang=ru_RU',
-    'skl': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=sat,skl&x={x}&y={y}&z={z}&lang=ru_RU'
-  };
-  var tmpl = urlTemplates[type] || urlTemplates['map'];
-  if (yandexApiKey) {
-    tileLayer = L.tileLayer(tmpl.replace('{key}', yandexApiKey), { attribution:'© Яндекс', maxZoom:18, tileSize:256 });
-  } else {
-    tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OSM', maxZoom:19 });
-  }
-  tileLayer.addTo(map);
-  log('Tile layer: ' + type + (yandexApiKey ? ' (Yandex)' : ' (OSM)'));
-}
-
-// ═══════════════════════════════════════════════════════════
-//   СЛОИ
-// ═══════════════════════════════════════════════════════════
-function createLayer(id, name) {
-  var lg = L.layerGroup().addTo(map);
-  layers[id] = { name:name, visible:true, group:lg, objects:[] };
-  layerOrder.push(id);
-  log('Layer created: ' + name + ' id=' + id);
-}
-function addLayerGroup(id, name) {
-  layers[id] = { name:name, visible:true, group:null, objects:[], isGroup:true };
-  layerOrder.push(id);
-  log('Group created: ' + name + ' id=' + id);
-}
-function addLayer(id, name) { createLayer(id, name); setActiveLayer(id); }
-function removeLayer(id) {
-  if (!layers[id]) return;
-  var name = layers[id].name;
-  if (layers[id].group) { layers[id].group.clearLayers(); map.removeLayer(layers[id].group); }
-  delete layers[id];
-  layerOrder = layerOrder.filter(function(x){ return x !== id; });
-  if (activeLayerId === id) activeLayerId = layerOrder[layerOrder.length-1] || null;
-  log('Layer removed: ' + name + ' id=' + id);
-}
-function setLayerVisible(id, visible) {
-  if (!layers[id]) return;
-  layers[id].visible = visible;
-  if (layers[id].group) {
-    if (visible) map.addLayer(layers[id].group);
-    else         map.removeLayer(layers[id].group);
-  }
-  log('Layer visible: ' + id + ' -> ' + visible);
-}
-function setActiveLayer(id) { activeLayerId = id; log('Active layer: ' + id); }
-function renameLayer(id, name) {
-  if (layers[id]) {
-    var old = layers[id].name;
-    layers[id].name = name;
-    log('Layer renamed: ' + old + ' -> ' + name);
-  }
-}
-
-function reorderLayers(ids) {
-  var newOrder = [];
-  ids.forEach(function(id) {
-    if (layers[id]) newOrder.push(id);
-  });
-  layerOrder.forEach(function(id) {
-    if (newOrder.indexOf(id) === -1) newOrder.push(id);
-  });
-  layerOrder = newOrder;
-  log('Layer order synced: [' + layerOrder.join(', ') + ']');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ИНСТРУМЕНТЫ
-// ═══════════════════════════════════════════════════════════
-function setTool(params) {
-  activeTool = params.tool;
-  if (params.color)      brushColor = params.color;
-  if (params.size)       brushSize  = params.size;
-  if (params.eraserSize) eraserSize = params.eraserSize;
-  if (params.fontSize)   fontSize   = params.fontSize;
-  if (params.fontColor)  fontColor  = params.fontColor;
-  if (typeof params.fontBold   !== 'undefined') fontBold   = params.fontBold;
-  if (typeof params.fontItalic !== 'undefined') fontItalic = params.fontItalic;
-
-  document.body.className = 'tool-' + activeTool;
-
-  if (activeTool === 'select') {
-    map.dragging.enable();
-    eraserCursorEl.style.display = 'none';
-  } else if (activeTool === 'text') {
-    map.dragging.disable();
-    eraserCursorEl.style.display = 'none';
-  } else if (activeTool === 'brush' || activeTool === 'eraser') {
-    map.dragging.disable();
-    if (activeTool === 'eraser') updateEraserCursor();
-    else eraserCursorEl.style.display = 'none';
-  }
-
-  if (activeTool !== 'select') deselectAll();
-  log('Tool: ' + activeTool);
-}
-
-function setBrushColor(c)  { brushColor = c; log('Brush color: ' + c); }
-function setBrushSize(s)   { brushSize  = s; log('Brush size: ' + s); }
-function setEraserSize(s)  { eraserSize = s; updateEraserCursor(); log('Eraser size: ' + s); }
-function setFontSize(s)    { fontSize   = s; log('Font size: ' + s); }
-function setFontColor(c)   { fontColor  = c; log('Font color: ' + c); }
-function setFontBold(b)    { fontBold   = b; log('Font bold: ' + b); }
-function setFontItalic(i)  { fontItalic = i; log('Font italic: ' + i); }
-
-function updateEraserCursor() {
-  var px = eraserSize * 2;
-  eraserCursorEl.style.width  = px + 'px';
-  eraserCursorEl.style.height = px + 'px';
-}
-
-// ═══════════════════════════════════════════════════════════
-//   СОБЫТИЯ МЫШИ
-// ═══════════════════════════════════════════════════════════
-function onMapMouseDown(e) {
-  if (spaceDown) return;
-  if (!activeLayerId || (layers[activeLayerId] && layers[activeLayerId].isGroup)) return;
-  if (activeTool === 'brush')  { startDrawing(e.latlng); }
-  else if (activeTool === 'eraser') { isErasing = true; eraserPath = [e.latlng]; }
-  else if (activeTool === 'text')   { placeText(e.latlng); }
-}
-function onMapMouseMove(e) {
-  if (activeTool === 'eraser' && !spaceDown) {
-    var cp = e.containerPoint;
-    eraserCursorEl.style.left    = cp.x + 'px';
-    eraserCursorEl.style.top     = cp.y + 'px';
-    eraserCursorEl.style.display = 'block';
-    if (isErasing) eraserPath.push(e.latlng);
-  }
-  if (activeTool === 'brush' && isDrawing && !spaceDown) continueDrawing(e.latlng);
-}
-function onMapMouseUp(e) {
-  if (activeTool === 'brush' && isDrawing) finishDrawing();
-  if (activeTool === 'eraser' && isErasing) {
-    applyEraser(e.originalEvent && e.originalEvent.shiftKey);
-    isErasing  = false;
-    eraserPath = [];
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-//   РИСОВАНИЕ КИСТЬЮ
-// ═══════════════════════════════════════════════════════════
-function startDrawing(latlng) {
-  isDrawing   = true;
-  currentPath = [latlng];
-  currentPolyline = L.polyline([latlng], {
-    color:    brushColor,
-    weight:   brushSize,
-    opacity:  0.95,
-    smoothFactor: 0,
-    lineCap:  'round',
-    lineJoin: 'round'
-  });
-  layers[activeLayerId].group.addLayer(currentPolyline);
-  makeObjectInteractive(currentPolyline, activeLayerId);
-}
-
-function continueDrawing(latlng) {
-  currentPath.push(latlng);
-  currentPolyline.setLatLngs(currentPath);
-}
-
-function rdpSimplify(points, tolerance) {
-  if (points.length <= 2) return points;
-  var maxDist = 0, maxIdx = 0;
-  var start = points[0], end = points[points.length - 1];
-  for (var i = 1; i < points.length - 1; i++) {
-    var d = perpendicularDist(points[i], start, end);
-    if (d > maxDist) { maxDist = d; maxIdx = i; }
-  }
-  if (maxDist > tolerance) {
-    var left  = rdpSimplify(points.slice(0, maxIdx + 1), tolerance);
-    var right = rdpSimplify(points.slice(maxIdx), tolerance);
-    return left.slice(0, -1).concat(right);
-  }
-  return [start, end];
-}
-
-function perpendicularDist(pt, lineStart, lineEnd) {
-  var dx = lineEnd.lat - lineStart.lat;
-  var dy = lineEnd.lng - lineStart.lng;
-  if (dx === 0 && dy === 0) {
-    dx = pt.lat - lineStart.lat;
-    dy = pt.lng - lineStart.lng;
-    return Math.sqrt(dx*dx + dy*dy);
-  }
-  var t = ((pt.lat - lineStart.lat)*dx + (pt.lng - lineStart.lng)*dy) / (dx*dx + dy*dy);
-  t = Math.max(0, Math.min(1, t));
-  var nearLat = lineStart.lat + t*dx;
-  var nearLng = lineStart.lng + t*dy;
-  var dlat = pt.lat - nearLat;
-  var dlng = pt.lng - nearLng;
-  return Math.sqrt(dlat*dlat + dlng*dlng);
-}
-
-function finishDrawing() {
-  isDrawing = false;
-  if (!currentPolyline || currentPath.length < 2) {
-    if (currentPolyline) layers[activeLayerId].group.removeLayer(currentPolyline);
-    currentPolyline = null; currentPath = [];
-    return;
-  }
-
-  var simplified = rdpSimplify(currentPath, 0.00005);
-  currentPolyline.setLatLngs(simplified);
-  currentPolyline.options.smoothFactor = 1.5;
-
-  var obj = {
-    id:      'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
-    type:    'polyline',
-    latlngs: simplified.map(function(ll){ return [ll.lat, ll.lng]; }),
-    color:   brushColor,
-    weight:  brushSize,
-    layerId: activeLayerId,
-    leafletObj: currentPolyline
-  };
-  layers[activeLayerId].objects.push(obj);
-  pushHistory({action:'add', obj:obj});
-  log('Line drawn, pts before: ' + currentPath.length + ', after simplify: ' + simplified.length);
-
-  currentPolyline = null; currentPath = [];
-  // FIX #2: синхронизировать панель слоёв после добавления объекта
-  sendLayersToQt();
-  notifyStatus('Линия нарисована');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ЛАСТИК
-// ═══════════════════════════════════════════════════════════
-function applyEraser(allLayers) {
-  if (eraserPath.length < 1) return;
-
-  var zoom = map.getZoom();
-  var metersPerPx   = 156543 / Math.pow(2, zoom);
-  var eraserRadiusM = eraserSize * metersPerPx;
-
-  log('Eraser radius: ' + eraserRadiusM.toFixed(1) + 'm, pts in path: ' + eraserPath.length);
-
-  var targetLayerIds = allLayers ? Object.keys(layers) : [activeLayerId];
-
-  targetLayerIds.forEach(function(lid) {
-    if (!layers[lid] || !layers[lid].group) return;
-    var toRemove = [];
-    var toAdd    = [];
-
-    layers[lid].objects.forEach(function(obj) {
-      if (obj.type === 'polyline') {
-        var keepSegments = [];
-        var currentSeg   = [];
-        var latlngs = obj.latlngs;
-
-        for (var i = 0; i < latlngs.length; i++) {
-          var ptLL  = L.latLng(latlngs[i][0], latlngs[i][1]);
-          var erased = false;
-          for (var j = 0; j < eraserPath.length; j++) {
-            if (map.distance(ptLL, eraserPath[j]) <= eraserRadiusM) { erased = true; break; }
-          }
-          if (!erased) {
-            currentSeg.push(latlngs[i]);
-          } else {
-            if (currentSeg.length >= 2) keepSegments.push(currentSeg.slice());
-            currentSeg = [];
-          }
-        }
-        if (currentSeg.length >= 2) keepSegments.push(currentSeg);
-
-        var totalKept = keepSegments.reduce(function(s, seg){ return s + seg.length; }, 0);
-        if (totalKept < latlngs.length) {
-          layers[lid].group.removeLayer(obj.leafletObj);
-          toRemove.push(obj);
-          keepSegments.forEach(function(seg) {
-            var pl = L.polyline(seg, { color:obj.color, weight:obj.weight, opacity:0.95, lineCap:'round', lineJoin:'round', smoothFactor:1.5 });
-            layers[lid].group.addLayer(pl);
-            var newObj = {
-              id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
-              type:'polyline', latlngs:seg, color:obj.color, weight:obj.weight,
-              layerId:lid, leafletObj:pl
-            };
-            makeObjectInteractive(pl, lid);
-            toAdd.push(newObj);
-          });
-        }
-      } else if (obj.type === 'text' || obj.type === 'image') {
-        if (obj.latlng) {
-          var ptLL = L.latLng(obj.latlng[0], obj.latlng[1]);
-          for (var j = 0; j < eraserPath.length; j++) {
-            if (map.distance(ptLL, eraserPath[j]) <= eraserRadiusM) {
-              if (obj.leafletObj) layers[lid].group.removeLayer(obj.leafletObj);
-              toRemove.push(obj);
-              break;
-            }
-          }
-        }
-      }
-    });
-
-    toRemove.forEach(function(o) { layers[lid].objects = layers[lid].objects.filter(function(x){ return x !== o; }); });
-    toAdd.forEach(function(o)    { layers[lid].objects.push(o); });
-  });
-
-  // FIX #2: синхронизировать панель слоёв после ластика
-  sendLayersToQt();
-  notifyStatus('Ластик применён');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ТЕКСТ
-// ═══════════════════════════════════════════════════════════
-function buildTextIcon(text, fSize, fColor, fBold, fItalic) {
-  var weight = fBold   ? 'bold'   : 'normal';
-  var style  = fItalic ? 'italic' : 'normal';
-  var css    = style + ' ' + weight + ' ' + fSize + 'px Segoe UI, Arial, sans-serif';
-  // FIX #6: text-shadow:none в инлайн-стиле
-  return L.divIcon({
-    className: '',
-    html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor + ';text-shadow:none">' +
-          escapeHtml(text) + '</div>',
-    iconAnchor: [0, 0],
-    iconSize: null
-  });
-}
-
-function placeText(latlng) {
-  map.dragging.disable();
-  var text = prompt('Введите текст подписи:');
-
-  map._dragging = false;
-  if (map.dragging._draggable) map.dragging._draggable._moving = false;
-
-  if (bridge) bridge.onStatus('__SWITCH_SELECT__');
-
-  if (!text) return;
-
-  var icon   = buildTextIcon(text, fontSize, fontColor, fontBold, fontItalic);
-  var marker = L.marker(latlng, { icon:icon, draggable:true });
-  layers[activeLayerId].group.addLayer(marker);
-
-  var obj = {
-    id:     'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
-    type:   'text', text:text,
-    latlng: [latlng.lat, latlng.lng],
-    fontSize:fontSize, fontColor:fontColor, fontBold:fontBold, fontItalic:fontItalic,
-    layerId:activeLayerId, leafletObj:marker
-  };
-
-  marker.on('dragstart', function() {
-    if (marker._icon) marker._icon.style.cursor = 'grabbing';
-  });
-  marker.on('dragend', function(ev) {
-    var ll = ev.target.getLatLng();
-    obj.latlng = [ll.lat, ll.lng];
-    if (marker._icon) marker._icon.style.cursor = '';
-    log('Text dragged to ' + ll.lat.toFixed(4) + ',' + ll.lng.toFixed(4));
-  });
-  marker.on('click', function(ev) {
-    L.DomEvent.stopPropagation(ev);
-    if (activeTool === 'select') selectObject(obj);
-  });
-  marker.on('dblclick', function(ev) {
-    L.DomEvent.stopPropagation(ev);
-    openTextEditDialog(obj, marker);
-  });
-
-  layers[activeLayerId].objects.push(obj);
-  pushHistory({action:'add', obj:obj});
-  log('Text placed: "' + text + '"');
-  // FIX #2: синхронизировать панель слоёв после добавления текста
-  sendLayersToQt();
-  notifyStatus('Текст добавлен');
-}
-
-// FIX #7: диалог редактирования текстового объекта через bridge → Python
-function openTextEditDialog(obj, marker) {
-  if (!bridge) return;
-  var payload = JSON.stringify({
-    id:        obj.id,
-    text:      obj.text,
-    fontSize:  obj.fontSize,
-    fontColor: obj.fontColor,
-    fontBold:  obj.fontBold,
-    fontItalic:obj.fontItalic
-  });
-  bridge.onStatus('__EDIT_TEXT__:' + payload);
-}
-
-// Вызывается из Python после закрытия диалога
-function applyTextEdit(id, text, fSize, fColor, fBold, fItalic) {
-  var obj = null;
-  Object.keys(layers).forEach(function(layerId) {
-    layers[layerId].objects.forEach(function(o) {
-      if (o.id === id) { obj = o; }
-    });
-  });
-  if (!obj) { log('applyTextEdit: obj not found id=' + id); return; }
-  obj.text      = text;
-  obj.fontSize  = fSize;
-  obj.fontColor = fColor;
-  obj.fontBold  = fBold;
-  obj.fontItalic = fItalic;
-  var icon = buildTextIcon(text, fSize, fColor, fBold, fItalic);
-  obj.leafletObj.setIcon(icon);
-  obj.leafletObj.off('dblclick');
-  obj.leafletObj.on('dblclick', function(ev) {
-    L.DomEvent.stopPropagation(ev);
-    openTextEditDialog(obj, obj.leafletObj);
-  });
-  log('Text edited: id=' + id + ' text="' + text + '"');
-  notifyStatus('Текст обновлён');
-}
-
-function escapeHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ИМПОРТ ИЗОБРАЖЕНИЙ
-// ═══════════════════════════════════════════════════════════
-function importImage(fileUrl) {
-  var center   = map.getCenter();
-  var bounds   = map.getBounds();
-  var latRange = (bounds.getNorth() - bounds.getSouth()) * 0.3;
-  var lngRange = (bounds.getEast()  - bounds.getWest())  * 0.3;
-  var imgBounds = [[center.lat - latRange, center.lng - lngRange],[center.lat + latRange, center.lng + lngRange]];
-  var overlay = L.imageOverlay(fileUrl, imgBounds, { opacity:0.8, interactive:true });
-  layers[activeLayerId].group.addLayer(overlay);
-  var obj = {
-    id:'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
-    type:'image', url:fileUrl, latlng:[center.lat,center.lng],
-    bounds:imgBounds, opacity:0.8, layerId:activeLayerId, leafletObj:overlay
-  };
-  overlay.on('click', function(ev) { L.DomEvent.stopPropagation(ev); selectObject(obj); });
-  layers[activeLayerId].objects.push(obj);
-  pushHistory({action:'add', obj:obj});
-  log('Image imported: ' + fileUrl);
-  // FIX #2: синхронизировать панель слоёв после импорта изображения
-  sendLayersToQt();
-  notifyStatus('Изображение импортировано.');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ВЫБОР
-// ═══════════════════════════════════════════════════════════
-function makeObjectInteractive(leafletObj, layerId) {
-  leafletObj.on('click', function(ev) {
-    if (activeTool !== 'select') return;
-    L.DomEvent.stopPropagation(ev);
-    if (!layers[layerId]) return;
-    var found = layers[layerId].objects.filter(function(o){ return o.leafletObj === leafletObj; })[0];
-    if (found) selectObject(found);
-  });
-}
-function selectObject(obj) {
-  deselectAll();
-  selectedObj = obj;
-  if (obj.leafletObj) {
-    if (obj.leafletObj.setStyle) obj.leafletObj.setStyle({ color:'#00aaff', weight:(obj.weight||4)+2 });
-    if (obj.leafletObj._icon)   obj.leafletObj._icon.style.outline = '2px solid #00aaff';
-  }
-  log('Selected: ' + obj.type + ' id=' + obj.id);
-  notifyStatus('Объект выбран: ' + obj.type);
-}
-function deselectAll() {
-  if (!selectedObj) return;
-  if (selectedObj.leafletObj) {
-    if (selectedObj.leafletObj.setStyle) selectedObj.leafletObj.setStyle({ color:selectedObj.color||brushColor, weight:selectedObj.weight||brushSize });
-    if (selectedObj.leafletObj._icon)   selectedObj.leafletObj._icon.style.outline = '';
-  }
-  selectedObj = null;
-}
-function deleteSelected() {
-  if (!selectedObj) return;
-  var lid = selectedObj.layerId;
-  if (layers[lid]) {
-    layers[lid].group.removeLayer(selectedObj.leafletObj);
-    layers[lid].objects = layers[lid].objects.filter(function(o){ return o !== selectedObj; });
-  }
-  pushHistory({action:'delete', obj:selectedObj});
-  log('Deleted: ' + selectedObj.type + ' id=' + selectedObj.id);
-  selectedObj = null;
-  // FIX #2: синхронизировать панель слоёв после удаления
-  sendLayersToQt();
-  notifyStatus('Объект удалён');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ИСТОРИЯ
-// ═══════════════════════════════════════════════════════════
-function pushHistory(record) {
-  history.push(record);
-  if (history.length > MAX_HISTORY) history.shift();
-  log('History push: ' + record.action + ' (' + history.length + ' total)');
-}
-
-function undoAction() {
-  if (history.length === 0) { notifyStatus('Нечего отменять'); log('Undo: history empty'); return; }
-  var rec = history.pop();
-  log('Undo: ' + rec.action + ' ' + rec.obj.type);
-  if (rec.action === 'add') {
-    var obj = rec.obj;
-    if (layers[obj.layerId]) {
-      layers[obj.layerId].group.removeLayer(obj.leafletObj);
-      layers[obj.layerId].objects = layers[obj.layerId].objects.filter(function(o){ return o !== obj; });
-    }
-  } else if (rec.action === 'delete') {
-    var obj = rec.obj;
-    if (layers[obj.layerId] && obj.leafletObj) {
-      layers[obj.layerId].group.addLayer(obj.leafletObj);
-      layers[obj.layerId].objects.push(obj);
-    }
-  }
-  // FIX #2: синхронизировать панель слоёв после undo
-  sendLayersToQt();
-  notifyStatus('Отменено');
-}
-
-// ═══════════════════════════════════════════════════════════
-//   СОХРАНЕНИЕ / ЗАГРУЗКА
-// ═══════════════════════════════════════════════════════════
-function saveProject(path) {
-  if (path) currentProjectPath = path;
-  var data = {
-    version:'1.0', center:[map.getCenter().lat, map.getCenter().lng],
-    zoom:map.getZoom(), tileType:currentTileType, activeLayerId:activeLayerId,
-    layers: layerOrder.map(function(lid) {
-      var lyr = layers[lid];
-      return { id:lid, name:lyr.name, visible:lyr.visible, isGroup:lyr.isGroup||false,
-               objects:(lyr.objects||[]).map(serializeObject) };
-    })
-  };
-  if (bridge) bridge.saveProjectData(JSON.stringify(data, null, 2));
-  log('Project saved to: ' + currentProjectPath);
-}
-
-function serializeObject(obj) {
-  var s = { id:obj.id, type:obj.type, layerId:obj.layerId };
-  if (obj.type==='polyline')  { s.latlngs=obj.latlngs; s.color=obj.color; s.weight=obj.weight; }
-  else if (obj.type==='text') { s.text=obj.text; s.latlng=obj.latlng; s.fontSize=obj.fontSize; s.fontColor=obj.fontColor; s.fontBold=obj.fontBold; s.fontItalic=obj.fontItalic; }
-  else if (obj.type==='image'){ s.url=obj.url; s.bounds=obj.bounds; s.opacity=obj.opacity; s.latlng=obj.latlng; }
-  return s;
-}
-
-function loadProject(jsonStr) {
-  var data;
-  try { data = JSON.parse(jsonStr); } catch(ex) { if (bridge) bridge.onError('Ошибка: '+ex.message); return; }
-  Object.keys(layers).forEach(function(lid) {
-    if (layers[lid].group) { layers[lid].group.clearLayers(); map.removeLayer(layers[lid].group); }
-  });
-  layers={}; layerOrder=[]; history=[];
-  if (data.center) map.setView(data.center, data.zoom||5);
-  if (data.tileType) changeTileLayer(data.tileType, yandexApiKey);
-  (data.layers||[]).forEach(function(lyr) {
-    if (lyr.isGroup) {
-      layers[lyr.id] = { name:lyr.name, visible:lyr.visible, group:null, objects:[], isGroup:true };
-    } else {
-      var lg = L.layerGroup(); if (lyr.visible) lg.addTo(map);
-      layers[lyr.id] = { name:lyr.name, visible:lyr.visible, group:lg, objects:[] };
-    }
-    layerOrder.push(lyr.id);
-    (lyr.objects||[]).forEach(function(obj){ restoreObject(obj, lyr.id); });
-  });
-  if (data.activeLayerId && layers[data.activeLayerId]) setActiveLayer(data.activeLayerId);
-  sendLayersToQt();
-  notifyStatus('Проект загружен');
-  log('Project loaded: ' + (data.layers||[]).length + ' layers');
-}
-
-function restoreObject(obj, layerId) {
-  var lyr = layers[layerId];
-  if (!lyr || !lyr.group) return;
-  if (obj.type==='polyline') {
-    var pl = L.polyline(obj.latlngs, { color:obj.color, weight:obj.weight, opacity:0.95, lineCap:'round', lineJoin:'round', smoothFactor:1.5 });
-    lyr.group.addLayer(pl);
-    var r = Object.assign({}, obj, {leafletObj:pl});
-    makeObjectInteractive(pl, layerId);
-    lyr.objects.push(r);
-  } else if (obj.type==='text') {
-    var ll   = L.latLng(obj.latlng[0], obj.latlng[1]);
-    var icon = buildTextIcon(obj.text, obj.fontSize, obj.fontColor, obj.fontBold, obj.fontItalic);
-    var marker = L.marker(ll, {icon:icon, draggable:true});
-    lyr.group.addLayer(marker);
-    var rObj = Object.assign({}, obj, {leafletObj:marker});
-    marker.on('dragstart', function() { if (marker._icon) marker._icon.style.cursor = 'grabbing'; });
-    marker.on('dragend', function(ev) {
-      var ll2=ev.target.getLatLng(); rObj.latlng=[ll2.lat,ll2.lng];
-      if (marker._icon) marker._icon.style.cursor = '';
-    });
-    marker.on('click', function(ev){ L.DomEvent.stopPropagation(ev); selectObject(rObj); });
-    marker.on('dblclick', function(ev) {
-      L.DomEvent.stopPropagation(ev);
-      openTextEditDialog(rObj, marker);
-    });
-    lyr.objects.push(rObj);
-  } else if (obj.type==='image') {
-    var overlay = L.imageOverlay(obj.url, obj.bounds, {opacity:obj.opacity||0.8, interactive:true});
-    lyr.group.addLayer(overlay);
-    var iObj = Object.assign({}, obj, {leafletObj:overlay});
-    overlay.on('click', function(ev){ L.DomEvent.stopPropagation(ev); selectObject(iObj); });
-    lyr.objects.push(iObj);
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-//   ДЕРЕВО СЛОЁВ
-// ═══════════════════════════════════════════════════════════
-function sendLayersToQt() {
-  if (!bridge) return;
-  var result = [];
-  layerOrder.forEach(function(lid) {
-    var lyr = layers[lid];
-    if (lyr.isGroup) {
-      result.push({ id:lid, name:lyr.name, children:[] });
-    } else {
-      // FIX #2: передаём кол-во объектов для отображения в панели
-      var count = (lyr.objects || []).length;
-      var grp = result[result.length-1];
-      if (grp && grp.children) grp.children.push({ id:lid, name:lyr.name, objectCount:count });
-      else result.push({ id:lid, name:lyr.name, children:[], objectCount:count });
-    }
-  });
-  bridge.onLayersData(JSON.stringify(result));
-  log('Layers sent to Qt: ' + result.length + ' items');
-}
-
-function notifyStatus(msg) { if (bridge) bridge.onStatus(msg); }
-
-document.addEventListener('mouseleave', function() { eraserCursorEl.style.display = 'none'; });
-</script>
+	<div id="map"></div>
+	<div id="eraser-cursor"></div>
+	<div id="debug-log"></div>
+	<button id="debug-copy-btn" title="Копировать лог">📋 Копировать</button>
+
+	<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+	<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+	<script>
+		// ═══════════════════════════════════════════════════════════
+		//   ЛОГГЕР  (Ctrl+` — показать/скрыть)
+		// ═══════════════════════════════════════════════════════════
+		var debugEl = document.getElementById('debug-log');
+		var debugCopyBtn = document.getElementById('debug-copy-btn');
+		var debugVisible = false;
+
+		function log(msg) {
+			var ts = new Date().toTimeString().slice(0, 8);
+			var text = '[' + ts + '] ' + msg;
+			console.log(text);
+			var line = document.createElement('div');
+			if (msg.indexOf('[PY]') === 0) line.className = 'py-log';
+			line.textContent = text;
+			debugEl.appendChild(line);
+			debugEl.scrollTop = debugEl.scrollHeight;
+			while (debugEl.children.length > 300) debugEl.removeChild(debugEl.firstChild);
+		}
+
+		document.addEventListener('keydown', function (e) {
+			if (e.ctrlKey && e.key === '`') {
+				debugVisible = !debugVisible;
+				debugEl.classList.toggle('visible', debugVisible);
+				debugCopyBtn.style.display = debugVisible ? 'block' : 'none';
+			}
+		});
+
+		// BUG-LOG fix: кнопка копирования лога
+		debugCopyBtn.addEventListener('click', function () {
+			var text = Array.from(debugEl.children).map(function (el) { return el.textContent; }).join('\n');
+			if (navigator.clipboard && navigator.clipboard.writeText) {
+				navigator.clipboard.writeText(text).then(function () {
+					debugCopyBtn.textContent = '✅ Скопировано';
+					setTimeout(function () { debugCopyBtn.textContent = '📋 Копировать'; }, 1500);
+				});
+			} else {
+				// fallback: выделить весь текст лога
+				var range = document.createRange();
+				range.selectNodeContents(debugEl);
+				var sel = window.getSelection();
+				sel.removeAllRanges();
+				sel.addRange(range);
+			}
+		});
+
+		// ═══════════════════════════════════════════════════════════
+		//   ЭКСПОРТ: скрыть / показать Leaflet UI
+		// ═══════════════════════════════════════════════════════════
+		function hideMapUI() {
+			document.body.classList.add('exporting');
+			log('Export: UI hidden');
+		}
+		function showMapUI() {
+			document.body.classList.remove('exporting');
+			log('Export: UI restored');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ГЛОБАЛЬНОЕ СОСТОЯНИЕ
+		// ═══════════════════════════════════════════════════════════
+		var map;
+		var bridge = null;
+		var activeTool = 'select';
+		var activeLayerId = null;
+		var currentProjectPath = '';
+
+		var brushColor = '#ff0000';
+		var brushSize = 4;
+		var eraserSize = 20;
+		var fontSize = 14;
+		var fontColor = '#000000';
+		var fontBold = true;
+		var fontItalic = false;
+
+		var layers = {};
+		var layerOrder = [];
+
+		var history = [];
+		var MAX_HISTORY = 50;
+
+		var selectedObj = null;
+
+		var isDrawing = false;
+		var currentPath = null;
+		var currentPolyline = null;
+
+		var isErasing = false;
+		var eraserPath = [];
+		var eraserCursorEl = document.getElementById('eraser-cursor');
+
+		var tileLayer = null;
+		var currentTileType = 'map';
+		var yandexApiKey = '';
+
+		// ═══════════════════════════════════════════════════════════
+		//   ПРОБЕЛ — временный pan (как в Photoshop)
+		// ═══════════════════════════════════════════════════════════
+		var spaceDown = false;
+
+		document.addEventListener('keydown', function (e) {
+			if (e.code === 'Space' && !e.ctrlKey && !e.altKey && activeTool !== 'select') {
+				if (spaceDown) return;
+				spaceDown = true;
+				e.preventDefault();
+				map.dragging.enable();
+				document.body.classList.add('space-pan');
+				log('Space pan: ON');
+			}
+		});
+		document.addEventListener('keyup', function (e) {
+			if (e.code === 'Space' && spaceDown) {
+				spaceDown = false;
+				document.body.classList.remove('space-pan', 'panning');
+				if (activeTool !== 'select') map.dragging.disable();
+				log('Space pan: OFF');
+			}
+		});
+
+		// ═══════════════════════════════════════════════════════════
+		//   ГОРЯЧИЕ КЛАВИШИ
+		// ═══════════════════════════════════════════════════════════
+		document.addEventListener('keydown', function (e) {
+			// FIX #8: Ctrl+Z убран, Python-сторона обрабатывает через QShortcut
+			if (e.ctrlKey && e.key === 's') {
+				e.preventDefault();
+				if (currentProjectPath) {
+					saveProject(currentProjectPath);
+				} else {
+					if (bridge) bridge.onStatus('__SAVE_DIALOG__');
+				}
+			}
+			if (e.key === 'Delete' || e.key === 'Backspace') {
+				deleteSelected();
+			}
+		});
+
+		function setProjectPath(path) {
+			currentProjectPath = path;
+			log('Project path set: ' + path);
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ИНИЦИАЛИЗАЦИЯ
+		// ═══════════════════════════════════════════════════════════
+		function initMap(apiKey) {
+			yandexApiKey = apiKey || '';
+			if (map) { changeTileLayer(currentTileType, yandexApiKey); return; }
+
+			map = L.map('map', { center: [55.0, 32.0], zoom: 5, zoomControl: true, preferCanvas: false });
+			map.getContainer().style.background = '#1a1a2e';
+			changeTileLayer('map', yandexApiKey);
+
+			map.on('mousedown', onMapMouseDown);
+			map.on('mousemove', onMapMouseMove);
+			map.on('mouseup', onMapMouseUp);
+
+			map.on('dragstart', function () { document.body.classList.add('panning'); });
+			map.on('dragend', function () { document.body.classList.remove('panning'); });
+
+			createLayer('layer_default', 'Слой 1');
+			setActiveLayer('layer_default');
+
+			new QWebChannel(qt.webChannelTransport, function (channel) {
+				bridge = channel.objects.bridge;
+				log('Bridge ready');
+				bridge.onStatus('Карта готова');
+			});
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ТАЙЛЫ
+		// ═══════════════════════════════════════════════════════════
+		function changeTileLayer(type, apiKey) {
+			currentTileType = type;
+			if (apiKey) yandexApiKey = apiKey;
+			if (tileLayer) map.removeLayer(tileLayer);
+			var urlTemplates = {
+				'map': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=map&x={x}&y={y}&z={z}&lang=ru_RU',
+				'sat': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=sat&x={x}&y={y}&z={z}&lang=ru_RU',
+				'skl': 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={key}&l=sat,skl&x={x}&y={y}&z={z}&lang=ru_RU'
+			};
+			var tmpl = urlTemplates[type] || urlTemplates['map'];
+			if (yandexApiKey) {
+				tileLayer = L.tileLayer(tmpl.replace('{key}', yandexApiKey), { attribution: '© Яндекс', maxZoom: 18, tileSize: 256 });
+			} else {
+				tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM', maxZoom: 19 });
+			}
+			tileLayer.addTo(map);
+			log('Tile layer: ' + type + (yandexApiKey ? ' (Yandex)' : ' (OSM)'));
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   СЛОИ
+		// ═══════════════════════════════════════════════════════════
+		function createLayer(id, name) {
+			var lg = L.layerGroup().addTo(map);
+			layers[id] = { name: name, visible: true, group: lg, objects: [] };
+			layerOrder.push(id);
+			log('Layer created: ' + name + ' id=' + id);
+		}
+		function addLayerGroup(id, name) {
+			layers[id] = { name: name, visible: true, group: null, objects: [], isGroup: true };
+			layerOrder.push(id);
+			log('Group created: ' + name + ' id=' + id);
+		}
+		function addLayer(id, name) { createLayer(id, name); setActiveLayer(id); }
+		function removeLayer(id) {
+			if (!layers[id]) return;
+			var name = layers[id].name;
+			if (layers[id].group) { layers[id].group.clearLayers(); map.removeLayer(layers[id].group); }
+			delete layers[id];
+			layerOrder = layerOrder.filter(function (x) { return x !== id; });
+			if (activeLayerId === id) activeLayerId = layerOrder[layerOrder.length - 1] || null;
+			log('Layer removed: ' + name + ' id=' + id);
+		}
+		function setLayerVisible(id, visible) {
+			if (!layers[id]) return;
+			layers[id].visible = visible;
+			if (layers[id].group) {
+				if (visible) map.addLayer(layers[id].group);
+				else map.removeLayer(layers[id].group);
+			}
+			log('Layer visible: ' + id + ' -> ' + visible);
+		}
+		function setActiveLayer(id) { activeLayerId = id; log('Active layer: ' + id); }
+		function renameLayer(id, name) {
+			if (layers[id]) {
+				var old = layers[id].name;
+				layers[id].name = name;
+				log('Layer renamed: ' + old + ' -> ' + name);
+			}
+		}
+
+		function reorderLayers(ids) {
+			var newOrder = [];
+			ids.forEach(function (id) {
+				if (layers[id]) newOrder.push(id);
+			});
+			layerOrder.forEach(function (id) {
+				if (newOrder.indexOf(id) === -1) newOrder.push(id);
+			});
+			layerOrder = newOrder;
+			log('Layer order synced: [' + layerOrder.join(', ') + ']');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ИНСТРУМЕНТЫ
+		// ═══════════════════════════════════════════════════════════
+		function setTool(params) {
+			activeTool = params.tool;
+			if (params.color) brushColor = params.color;
+			if (params.size) brushSize = params.size;
+			if (params.eraserSize) eraserSize = params.eraserSize;
+			if (params.fontSize) fontSize = params.fontSize;
+			if (params.fontColor) fontColor = params.fontColor;
+			if (typeof params.fontBold !== 'undefined') fontBold = params.fontBold;
+			if (typeof params.fontItalic !== 'undefined') fontItalic = params.fontItalic;
+
+			document.body.className = 'tool-' + activeTool;
+
+			if (activeTool === 'select') {
+				map.dragging.enable();
+				eraserCursorEl.style.display = 'none';
+			} else if (activeTool === 'text') {
+				map.dragging.disable();
+				eraserCursorEl.style.display = 'none';
+			} else if (activeTool === 'brush' || activeTool === 'eraser') {
+				map.dragging.disable();
+				if (activeTool === 'eraser') updateEraserCursor();
+				else eraserCursorEl.style.display = 'none';
+			}
+
+			if (activeTool !== 'select') deselectAll();
+			log('Tool: ' + activeTool);
+		}
+
+		function setBrushColor(c) { brushColor = c; log('Brush color: ' + c); }
+		function setBrushSize(s) { brushSize = s; log('Brush size: ' + s); }
+		function setEraserSize(s) { eraserSize = s; updateEraserCursor(); log('Eraser size: ' + s); }
+		function setFontSize(s) { fontSize = s; log('Font size: ' + s); }
+		function setFontColor(c) { fontColor = c; log('Font color: ' + c); }
+		function setFontBold(b) { fontBold = b; log('Font bold: ' + b); }
+		function setFontItalic(i) { fontItalic = i; log('Font italic: ' + i); }
+
+		function updateEraserCursor() {
+			var px = eraserSize * 2;
+			eraserCursorEl.style.width = px + 'px';
+			eraserCursorEl.style.height = px + 'px';
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   СОБЫТИЯ МЫШИ
+		// ═══════════════════════════════════════════════════════════
+		function onMapMouseDown(e) {
+			if (spaceDown) return;
+			if (!activeLayerId || (layers[activeLayerId] && layers[activeLayerId].isGroup)) return;
+			if (activeTool === 'brush') { startDrawing(e.latlng); }
+			else if (activeTool === 'eraser') { isErasing = true; eraserPath = [e.latlng]; }
+			else if (activeTool === 'text') { placeText(e.latlng); }
+		}
+		function onMapMouseMove(e) {
+			if (activeTool === 'eraser' && !spaceDown) {
+				var cp = e.containerPoint;
+				eraserCursorEl.style.left = cp.x + 'px';
+				eraserCursorEl.style.top = cp.y + 'px';
+				eraserCursorEl.style.display = 'block';
+				if (isErasing) eraserPath.push(e.latlng);
+			}
+			if (activeTool === 'brush' && isDrawing && !spaceDown) continueDrawing(e.latlng);
+		}
+		function onMapMouseUp(e) {
+			if (activeTool === 'brush' && isDrawing) finishDrawing();
+			if (activeTool === 'eraser' && isErasing) {
+				applyEraser(e.originalEvent && e.originalEvent.shiftKey);
+				isErasing = false;
+				eraserPath = [];
+			}
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   РИСОВАНИЕ КИСТЬЮ
+		// ═══════════════════════════════════════════════════════════
+		function startDrawing(latlng) {
+			isDrawing = true;
+			currentPath = [latlng];
+			currentPolyline = L.polyline([latlng], {
+				color: brushColor,
+				weight: brushSize,
+				opacity: 0.95,
+				smoothFactor: 0,
+				lineCap: 'round',
+				lineJoin: 'round'
+			});
+			layers[activeLayerId].group.addLayer(currentPolyline);
+			makeObjectInteractive(currentPolyline, activeLayerId);
+		}
+
+		function continueDrawing(latlng) {
+			currentPath.push(latlng);
+			currentPolyline.setLatLngs(currentPath);
+		}
+
+		function rdpSimplify(points, tolerance) {
+			if (points.length <= 2) return points;
+			var maxDist = 0, maxIdx = 0;
+			var start = points[0], end = points[points.length - 1];
+			for (var i = 1; i < points.length - 1; i++) {
+				var d = perpendicularDist(points[i], start, end);
+				if (d > maxDist) { maxDist = d; maxIdx = i; }
+			}
+			if (maxDist > tolerance) {
+				var left = rdpSimplify(points.slice(0, maxIdx + 1), tolerance);
+				var right = rdpSimplify(points.slice(maxIdx), tolerance);
+				return left.slice(0, -1).concat(right);
+			}
+			return [start, end];
+		}
+
+		function perpendicularDist(pt, lineStart, lineEnd) {
+			var dx = lineEnd.lat - lineStart.lat;
+			var dy = lineEnd.lng - lineStart.lng;
+			if (dx === 0 && dy === 0) {
+				dx = pt.lat - lineStart.lat;
+				dy = pt.lng - lineStart.lng;
+				return Math.sqrt(dx * dx + dy * dy);
+			}
+			var t = ((pt.lat - lineStart.lat) * dx + (pt.lng - lineStart.lng) * dy) / (dx * dx + dy * dy);
+			t = Math.max(0, Math.min(1, t));
+			var nearLat = lineStart.lat + t * dx;
+			var nearLng = lineStart.lng + t * dy;
+			var dlat = pt.lat - nearLat;
+			var dlng = pt.lng - nearLng;
+			return Math.sqrt(dlat * dlat + dlng * dlng);
+		}
+
+		function finishDrawing() {
+			isDrawing = false;
+			if (!currentPolyline || currentPath.length < 2) {
+				if (currentPolyline) layers[activeLayerId].group.removeLayer(currentPolyline);
+				currentPolyline = null; currentPath = [];
+				return;
+			}
+
+			var simplified = rdpSimplify(currentPath, 0.00005);
+			currentPolyline.setLatLngs(simplified);
+			currentPolyline.options.smoothFactor = 1.5;
+
+			var obj = {
+				id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+				type: 'polyline',
+				latlngs: simplified.map(function (ll) { return [ll.lat, ll.lng]; }),
+				color: brushColor,
+				weight: brushSize,
+				layerId: activeLayerId,
+				leafletObj: currentPolyline
+			};
+			layers[activeLayerId].objects.push(obj);
+			pushHistory({ action: 'add', obj: obj });
+			log('Line drawn, pts before: ' + currentPath.length + ', after simplify: ' + simplified.length);
+
+			currentPolyline = null; currentPath = [];
+			// FIX #2: синхронизировать панель слоёв после добавления объекта
+			sendLayersToQt();
+			notifyStatus('Линия нарисована');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ЛАСТИК
+		// ═══════════════════════════════════════════════════════════
+		function applyEraser(allLayers) {
+			if (eraserPath.length < 1) return;
+
+			var zoom = map.getZoom();
+			var metersPerPx = 156543 / Math.pow(2, zoom);
+			var eraserRadiusM = eraserSize * metersPerPx;
+
+			log('Eraser radius: ' + eraserRadiusM.toFixed(1) + 'm, pts in path: ' + eraserPath.length);
+
+			var targetLayerIds = allLayers ? Object.keys(layers) : [activeLayerId];
+
+			targetLayerIds.forEach(function (lid) {
+				if (!layers[lid] || !layers[lid].group) return;
+				var toRemove = [];
+				var toAdd = [];
+
+				layers[lid].objects.forEach(function (obj) {
+					if (obj.type === 'polyline') {
+						var keepSegments = [];
+						var currentSeg = [];
+						var latlngs = obj.latlngs;
+
+						for (var i = 0; i < latlngs.length; i++) {
+							var ptLL = L.latLng(latlngs[i][0], latlngs[i][1]);
+							var erased = false;
+							for (var j = 0; j < eraserPath.length; j++) {
+								if (map.distance(ptLL, eraserPath[j]) <= eraserRadiusM) { erased = true; break; }
+							}
+							if (!erased) {
+								currentSeg.push(latlngs[i]);
+							} else {
+								if (currentSeg.length >= 2) keepSegments.push(currentSeg.slice());
+								currentSeg = [];
+							}
+						}
+						if (currentSeg.length >= 2) keepSegments.push(currentSeg);
+
+						var totalKept = keepSegments.reduce(function (s, seg) { return s + seg.length; }, 0);
+						if (totalKept < latlngs.length) {
+							layers[lid].group.removeLayer(obj.leafletObj);
+							toRemove.push(obj);
+							keepSegments.forEach(function (seg) {
+								var pl = L.polyline(seg, { color: obj.color, weight: obj.weight, opacity: 0.95, lineCap: 'round', lineJoin: 'round', smoothFactor: 1.5 });
+								layers[lid].group.addLayer(pl);
+								var newObj = {
+									id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+									type: 'polyline', latlngs: seg, color: obj.color, weight: obj.weight,
+									layerId: lid, leafletObj: pl
+								};
+								makeObjectInteractive(pl, lid);
+								toAdd.push(newObj);
+							});
+						}
+					} else if (obj.type === 'text' || obj.type === 'image') {
+						if (obj.latlng) {
+							var ptLL = L.latLng(obj.latlng[0], obj.latlng[1]);
+							for (var j = 0; j < eraserPath.length; j++) {
+								if (map.distance(ptLL, eraserPath[j]) <= eraserRadiusM) {
+									if (obj.leafletObj) layers[lid].group.removeLayer(obj.leafletObj);
+									toRemove.push(obj);
+									break;
+								}
+							}
+						}
+					}
+				});
+
+				toRemove.forEach(function (o) { layers[lid].objects = layers[lid].objects.filter(function (x) { return x !== o; }); });
+				toAdd.forEach(function (o) { layers[lid].objects.push(o); });
+			});
+
+			// FIX #2: синхронизировать панель слоёв после ластика
+			sendLayersToQt();
+			notifyStatus('Ластик применён');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ТЕКСТ
+		// ═══════════════════════════════════════════════════════════
+		function buildTextIcon(text, fSize, fColor, fBold, fItalic) {
+			var weight = fBold ? 'bold' : 'normal';
+			var style = fItalic ? 'italic' : 'normal';
+			var css = style + ' ' + weight + ' ' + fSize + 'px Segoe UI, Arial, sans-serif';
+			// FIX #6: text-shadow:none в инлайн-стиле
+			return L.divIcon({
+				className: '',
+				html: '<div class="text-marker-wrap" style="font:' + css + ';color:' + fColor + ';text-shadow:none">' +
+					escapeHtml(text) + '</div>',
+				iconAnchor: [0, 0],
+				iconSize: null
+			});
+		}
+
+		function placeText(latlng) {
+			map.dragging.disable();
+			var text = prompt('Введите текст подписи:');
+
+			map._dragging = false;
+			if (map.dragging._draggable) map.dragging._draggable._moving = false;
+
+			if (bridge) bridge.onStatus('__SWITCH_SELECT__');
+
+			if (!text) return;
+
+			var icon = buildTextIcon(text, fontSize, fontColor, fontBold, fontItalic);
+			var marker = L.marker(latlng, { icon: icon, draggable: true });
+			layers[activeLayerId].group.addLayer(marker);
+
+			var obj = {
+				id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+				type: 'text', text: text,
+				latlng: [latlng.lat, latlng.lng],
+				fontSize: fontSize, fontColor: fontColor, fontBold: fontBold, fontItalic: fontItalic,
+				layerId: activeLayerId, leafletObj: marker
+			};
+
+			marker.on('dragstart', function () {
+				if (marker._icon) marker._icon.style.cursor = 'grabbing';
+			});
+			marker.on('dragend', function (ev) {
+				var ll = ev.target.getLatLng();
+				obj.latlng = [ll.lat, ll.lng];
+				if (marker._icon) marker._icon.style.cursor = '';
+				log('Text dragged to ' + ll.lat.toFixed(4) + ',' + ll.lng.toFixed(4));
+			});
+			marker.on('click', function (ev) {
+				L.DomEvent.stopPropagation(ev);
+				if (activeTool === 'select') selectObject(obj);
+			});
+			marker.on('dblclick', function (ev) {
+				L.DomEvent.stopPropagation(ev);
+				openTextEditDialog(obj, marker);
+			});
+
+			layers[activeLayerId].objects.push(obj);
+			pushHistory({ action: 'add', obj: obj });
+			log('Text placed: "' + text + '"');
+			// FIX #2: синхронизировать панель слоёв после добавления текста
+			sendLayersToQt();
+			notifyStatus('Текст добавлен');
+		}
+
+		// FIX #7: диалог редактирования текстового объекта через bridge → Python
+		function openTextEditDialog(obj, marker) {
+			if (!bridge) return;
+			var payload = JSON.stringify({
+				id: obj.id,
+				text: obj.text,
+				fontSize: obj.fontSize,
+				fontColor: obj.fontColor,
+				fontBold: obj.fontBold,
+				fontItalic: obj.fontItalic
+			});
+			bridge.onStatus('__EDIT_TEXT__:' + payload);
+		}
+
+		// Вызывается из Python после закрытия диалога
+		function applyTextEdit(id, text, fSize, fColor, fBold, fItalic) {
+			var obj = null;
+			Object.keys(layers).forEach(function (layerId) {
+				layers[layerId].objects.forEach(function (o) {
+					if (o.id === id) { obj = o; }
+				});
+			});
+			if (!obj) { log('applyTextEdit: obj not found id=' + id); return; }
+			obj.text = text;
+			obj.fontSize = fSize;
+			obj.fontColor = fColor;
+			obj.fontBold = fBold;
+			obj.fontItalic = fItalic;
+			var icon = buildTextIcon(text, fSize, fColor, fBold, fItalic);
+			obj.leafletObj.setIcon(icon);
+			obj.leafletObj.off('dblclick');
+			obj.leafletObj.on('dblclick', function (ev) {
+				L.DomEvent.stopPropagation(ev);
+				openTextEditDialog(obj, obj.leafletObj);
+			});
+			log('Text edited: id=' + id + ' text="' + text + '"');
+			notifyStatus('Текст обновлён');
+		}
+
+		function escapeHtml(s) {
+			return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ИМПОРТ ИЗОБРАЖЕНИЙ
+		// ═══════════════════════════════════════════════════════════
+		function importImage(fileUrl) {
+			var center = map.getCenter();
+			var bounds = map.getBounds();
+			var latRange = (bounds.getNorth() - bounds.getSouth()) * 0.3;
+			var lngRange = (bounds.getEast() - bounds.getWest()) * 0.3;
+			var imgBounds = [[center.lat - latRange, center.lng - lngRange], [center.lat + latRange, center.lng + lngRange]];
+			var overlay = L.imageOverlay(fileUrl, imgBounds, { opacity: 0.8, interactive: true });
+			layers[activeLayerId].group.addLayer(overlay);
+			var obj = {
+				id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+				type: 'image', url: fileUrl, latlng: [center.lat, center.lng],
+				bounds: imgBounds, opacity: 0.8, layerId: activeLayerId, leafletObj: overlay
+			};
+			overlay.on('click', function (ev) { L.DomEvent.stopPropagation(ev); selectObject(obj); });
+			layers[activeLayerId].objects.push(obj);
+			pushHistory({ action: 'add', obj: obj });
+			log('Image imported: ' + fileUrl);
+			// FIX #2: синхронизировать панель слоёв после импорта изображения
+			sendLayersToQt();
+			notifyStatus('Изображение импортировано.');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ВЫБОР
+		// ═══════════════════════════════════════════════════════════
+		function makeObjectInteractive(leafletObj, layerId) {
+			leafletObj.on('click', function (ev) {
+				if (activeTool !== 'select') return;
+				L.DomEvent.stopPropagation(ev);
+				if (!layers[layerId]) return;
+				var found = layers[layerId].objects.filter(function (o) { return o.leafletObj === leafletObj; })[0];
+				if (found) selectObject(found);
+			});
+		}
+		function selectObject(obj) {
+			deselectAll();
+			selectedObj = obj;
+			if (obj.leafletObj) {
+				if (obj.leafletObj.setStyle) obj.leafletObj.setStyle({ color: '#00aaff', weight: (obj.weight || 4) + 2 });
+				if (obj.leafletObj._icon && obj.type !== 'text') {
+					obj.leafletObj._icon.style.outline = '2px solid #00aaff';
+				}
+			}
+			log('Selected: ' + obj.type + ' id=' + obj.id);
+			notifyStatus('Объект выбран: ' + obj.type);
+		}
+		function deselectAll() {
+			if (!selectedObj) return;
+			if (selectedObj.leafletObj) {
+				if (selectedObj.leafletObj.setStyle) selectedObj.leafletObj.setStyle({ color: selectedObj.color || brushColor, weight: selectedObj.weight || brushSize });
+				if (selectedObj.leafletObj._icon && selectedObj.type !== 'text') {
+					selectedObj.leafletObj._icon.style.outline = '';
+				}
+			}
+			selectedObj = null;
+		}
+		function deleteSelected() {
+			if (!selectedObj) return;
+			var lid = selectedObj.layerId;
+			if (layers[lid]) {
+				layers[lid].group.removeLayer(selectedObj.leafletObj);
+				layers[lid].objects = layers[lid].objects.filter(function (o) { return o !== selectedObj; });
+			}
+			pushHistory({ action: 'delete', obj: selectedObj });
+			log('Deleted: ' + selectedObj.type + ' id=' + selectedObj.id);
+			selectedObj = null;
+			// FIX #2: синхронизировать панель слоёв после удаления
+			sendLayersToQt();
+			notifyStatus('Объект удалён');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ИСТОРИЯ
+		// ═══════════════════════════════════════════════════════════
+		function pushHistory(record) {
+			history.push(record);
+			if (history.length > MAX_HISTORY) history.shift();
+			log('History push: ' + record.action + ' (' + history.length + ' total)');
+		}
+
+		function undoAction() {
+			if (history.length === 0) { notifyStatus('Нечего отменять'); log('Undo: history empty'); return; }
+			var rec = history.pop();
+			log('Undo: ' + rec.action + ' ' + rec.obj.type);
+			if (rec.action === 'add') {
+				var obj = rec.obj;
+				if (layers[obj.layerId]) {
+					layers[obj.layerId].group.removeLayer(obj.leafletObj);
+					layers[obj.layerId].objects = layers[obj.layerId].objects.filter(function (o) { return o !== obj; });
+				}
+			} else if (rec.action === 'delete') {
+				var obj = rec.obj;
+				if (layers[obj.layerId] && obj.leafletObj) {
+					layers[obj.layerId].group.addLayer(obj.leafletObj);
+					layers[obj.layerId].objects.push(obj);
+				}
+			}
+			// FIX #2: синхронизировать панель слоёв после undo
+			sendLayersToQt();
+			notifyStatus('Отменено');
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   СОХРАНЕНИЕ / ЗАГРУЗКА
+		// ═══════════════════════════════════════════════════════════
+		function saveProject(path) {
+			if (path) currentProjectPath = path;
+			var data = {
+				version: '1.0', center: [map.getCenter().lat, map.getCenter().lng],
+				zoom: map.getZoom(), tileType: currentTileType, activeLayerId: activeLayerId,
+				layers: layerOrder.map(function (lid) {
+					var lyr = layers[lid];
+					return {
+						id: lid, name: lyr.name, visible: lyr.visible, isGroup: lyr.isGroup || false,
+						objects: (lyr.objects || []).map(serializeObject)
+					};
+				})
+			};
+			if (bridge) bridge.saveProjectData(JSON.stringify(data, null, 2));
+			log('Project saved to: ' + currentProjectPath);
+		}
+
+		function serializeObject(obj) {
+			var s = { id: obj.id, type: obj.type, layerId: obj.layerId };
+			if (obj.type === 'polyline') { s.latlngs = obj.latlngs; s.color = obj.color; s.weight = obj.weight; }
+			else if (obj.type === 'text') { s.text = obj.text; s.latlng = obj.latlng; s.fontSize = obj.fontSize; s.fontColor = obj.fontColor; s.fontBold = obj.fontBold; s.fontItalic = obj.fontItalic; }
+			else if (obj.type === 'image') { s.url = obj.url; s.bounds = obj.bounds; s.opacity = obj.opacity; s.latlng = obj.latlng; }
+			return s;
+		}
+
+		function loadProject(jsonStr) {
+			var data;
+			try { data = JSON.parse(jsonStr); } catch (ex) { if (bridge) bridge.onError('Ошибка: ' + ex.message); return; }
+			Object.keys(layers).forEach(function (lid) {
+				if (layers[lid].group) { layers[lid].group.clearLayers(); map.removeLayer(layers[lid].group); }
+			});
+			layers = {}; layerOrder = []; history = [];
+			if (data.center) map.setView(data.center, data.zoom || 5);
+			if (data.tileType) changeTileLayer(data.tileType, yandexApiKey);
+			(data.layers || []).forEach(function (lyr) {
+				if (lyr.isGroup) {
+					layers[lyr.id] = { name: lyr.name, visible: lyr.visible, group: null, objects: [], isGroup: true };
+				} else {
+					var lg = L.layerGroup(); if (lyr.visible) lg.addTo(map);
+					layers[lyr.id] = { name: lyr.name, visible: lyr.visible, group: lg, objects: [] };
+				}
+				layerOrder.push(lyr.id);
+				(lyr.objects || []).forEach(function (obj) { restoreObject(obj, lyr.id); });
+			});
+			if (data.activeLayerId && layers[data.activeLayerId]) setActiveLayer(data.activeLayerId);
+			sendLayersToQt();
+			notifyStatus('Проект загружен');
+			log('Project loaded: ' + (data.layers || []).length + ' layers');
+		}
+
+		function restoreObject(obj, layerId) {
+			var lyr = layers[layerId];
+			if (!lyr || !lyr.group) return;
+			if (obj.type === 'polyline') {
+				var pl = L.polyline(obj.latlngs, { color: obj.color, weight: obj.weight, opacity: 0.95, lineCap: 'round', lineJoin: 'round', smoothFactor: 1.5 });
+				lyr.group.addLayer(pl);
+				var r = Object.assign({}, obj, { leafletObj: pl });
+				makeObjectInteractive(pl, layerId);
+				lyr.objects.push(r);
+			} else if (obj.type === 'text') {
+				var ll = L.latLng(obj.latlng[0], obj.latlng[1]);
+				var icon = buildTextIcon(obj.text, obj.fontSize, obj.fontColor, obj.fontBold, obj.fontItalic);
+				var marker = L.marker(ll, { icon: icon, draggable: true });
+				lyr.group.addLayer(marker);
+				var rObj = Object.assign({}, obj, { leafletObj: marker });
+				marker.on('dragstart', function () { if (marker._icon) marker._icon.style.cursor = 'grabbing'; });
+				marker.on('dragend', function (ev) {
+					var ll2 = ev.target.getLatLng(); rObj.latlng = [ll2.lat, ll2.lng];
+					if (marker._icon) marker._icon.style.cursor = '';
+				});
+				marker.on('click', function (ev) { L.DomEvent.stopPropagation(ev); selectObject(rObj); });
+				marker.on('dblclick', function (ev) {
+					L.DomEvent.stopPropagation(ev);
+					openTextEditDialog(rObj, marker);
+				});
+				lyr.objects.push(rObj);
+			} else if (obj.type === 'image') {
+				var overlay = L.imageOverlay(obj.url, obj.bounds, { opacity: obj.opacity || 0.8, interactive: true });
+				lyr.group.addLayer(overlay);
+				var iObj = Object.assign({}, obj, { leafletObj: overlay });
+				overlay.on('click', function (ev) { L.DomEvent.stopPropagation(ev); selectObject(iObj); });
+				lyr.objects.push(iObj);
+			}
+		}
+
+		// ═══════════════════════════════════════════════════════════
+		//   ДЕРЕВО СЛОЁВ
+		// ═══════════════════════════════════════════════════════════
+		function sendLayersToQt() {
+			if (!bridge) return;
+			var result = [];
+			layerOrder.forEach(function (lid) {
+				var lyr = layers[lid];
+				if (lyr.isGroup) {
+					result.push({ id: lid, name: lyr.name, children: [] });
+				} else {
+					// FIX #2: передаём кол-во объектов для отображения в панели
+					var count = (lyr.objects || []).length;
+					var grp = result[result.length - 1];
+					if (grp && grp.children) grp.children.push({ id: lid, name: lyr.name, objectCount: count });
+					else result.push({ id: lid, name: lyr.name, children: [], objectCount: count });
+				}
+			});
+			bridge.onLayersData(JSON.stringify(result));
+			log('Layers sent to Qt: ' + result.length + ' items');
+		}
+
+		function notifyStatus(msg) { if (bridge) bridge.onStatus(msg); }
+
+		document.addEventListener('mouseleave', function () { eraserCursorEl.style.display = 'none'; });
+	</script>
 </body>
+
 </html>

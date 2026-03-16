@@ -96,7 +96,7 @@ class TextEditDialog(QDialog):
         self.size_spin.setValue(int(obj_data.get("fontSize", 14)))
         form.addRow("Размер шрифта:", self.size_spin)
 
-        self._color = obj_data.get("fontColor", "#ffffff")
+        self._color = obj_data.get("fontColor", "#000000")
         self.color_btn = QPushButton()
         self.color_btn.setFixedHeight(28)
         self._update_color_btn()
@@ -106,7 +106,7 @@ class TextEditDialog(QDialog):
         style_row = QHBoxLayout()
         self.bold_cb   = QCheckBox("Жирный")
         self.italic_cb = QCheckBox("Курсив")
-        self.bold_cb.setChecked(bool(obj_data.get("fontBold", False)))
+        self.bold_cb.setChecked(bool(obj_data.get("fontBold", True)))
         self.italic_cb.setChecked(bool(obj_data.get("fontItalic", False)))
         style_row.addWidget(self.bold_cb)
         style_row.addWidget(self.italic_cb)
@@ -200,8 +200,8 @@ class MainWindow(QMainWindow):
         self._brush_size           = 4
         self._eraser_size          = 20
         self._font_size            = 14
-        self._font_color           = "#ffffff"
-        self._font_bold            = False
+        self._font_color           = "#000000"
+        self._font_bold            = True
         self._font_italic          = False
         self._export_path          = None
 
@@ -375,6 +375,7 @@ class MainWindow(QMainWindow):
         self.font_color_btn.clicked.connect(self._pick_font_color)
         lay.addWidget(self.font_color_btn)
         self.bold_cb = QCheckBox("Ж")
+        self.bold_cb.setChecked(True)				
         self.bold_cb.stateChanged.connect(self._on_font_bold_changed)
         lay.addWidget(self.bold_cb)
         self.italic_cb = QCheckBox("К")

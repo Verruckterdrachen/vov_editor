@@ -61,7 +61,7 @@
           "text": "Минск",
           "latlng": [53.9, 27.5],
           "fontSize": 16,
-          "fontColor": "#ffffff",
+          "fontColor": "#000000",
           "fontBold": true,
           "fontItalic": false
         }
