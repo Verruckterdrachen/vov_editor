@@ -88,17 +88,14 @@ class TextEditDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
-        # Поле текста
         self.text_edit = QLineEdit(obj_data.get("text", ""))
         form.addRow("Текст:", self.text_edit)
 
-        # Размер шрифта
         self.size_spin = QSpinBox()
         self.size_spin.setRange(8, 120)
         self.size_spin.setValue(int(obj_data.get("fontSize", 14)))
         form.addRow("Размер шрифта:", self.size_spin)
 
-        # Цвет
         self._color = obj_data.get("fontColor", "#ffffff")
         self.color_btn = QPushButton()
         self.color_btn.setFixedHeight(28)
@@ -106,7 +103,6 @@ class TextEditDialog(QDialog):
         self.color_btn.clicked.connect(self._pick_color)
         form.addRow("Цвет:", self.color_btn)
 
-        # Жирный / Курсив
         style_row = QHBoxLayout()
         self.bold_cb   = QCheckBox("Жирный")
         self.italic_cb = QCheckBox("Курсив")
@@ -291,8 +287,7 @@ class MainWindow(QMainWindow):
         self.layer_tree.setColumnWidth(0, 190)
         self.layer_tree.setColumnWidth(1, 28)
         self.layer_tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
-        # FIX #3: отключаем встроенный inline-edit, чтобы двойной клик
-        # не перехватывался деревом — обрабатываем его вручную через сигнал
+        # FIX #3: отключаем встроенный inline-edit
         self.layer_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.layer_tree.itemClicked.connect(self._on_layer_clicked)
         self.layer_tree.itemDoubleClicked.connect(self._on_layer_double_clicked)
@@ -403,7 +398,6 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
 
     def _js_log(self, msg: str):
-        """Пишет сообщение в debug-лог JS (Ctrl+` для показа)."""
         safe = msg.replace("\\", "\\\\").replace("'", "\\'")
         self._js(f"log('[PY] {safe}');")
 
@@ -415,6 +409,12 @@ class MainWindow(QMainWindow):
         self._js(f'initMap({json.dumps(api_key)});')
         self.status_lbl.setText("Карта загружена")
         self._js_log("App started, map loaded")
+        # FIX #1: автооткрытие последнего проекта
+        # 300мс задержка — даём время бриджу инициализироваться (после 'Bridge ready')
+        last = self.config.get("last_project", "")
+        if last and os.path.exists(last):
+            QTimer.singleShot(300, lambda: self._load_project_from_path(last))
+            self._js_log(f"Auto-opening last project: {os.path.basename(last)}")
 
     def _set_tool(self, tool: str):
         self._current_tool = tool
@@ -485,8 +485,6 @@ class MainWindow(QMainWindow):
             if not item.is_group: self._activate_layer(item)
 
     def _on_layer_double_clicked(self, item, col):
-        # FIX #3: NoEditTriggers отключает встроенный edit,
-        # здесь вручную показываем диалог переименования
         if not isinstance(item, LayerItem): return
         old_name = item.text(0)
         name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:", text=old_name)
@@ -589,6 +587,22 @@ class MainWindow(QMainWindow):
         self._js(f'importImage("file:///{path_js}");')
         self._js_log(f"Image imported: {os.path.basename(path)}")
 
+    # FIX #1: вынесена общая логика загрузки проекта по пути
+    def _load_project_from_path(self, path: str):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = f.read()
+        except Exception as e:
+            self.status_lbl.setText(f"Ошибка открытия: {e}")
+            return
+        self._current_project_path = path
+        safe_path = path.replace("\\", "/")
+        self._js(f'setProjectPath("{safe_path}");')
+        self._js(f"loadProject({json.dumps(data)});")
+        self.project_label.setText(os.path.basename(path))
+        self._js("sendLayersToQt();")
+        self._js_log(f"Project loaded: {os.path.basename(path)}")
+
     def _save_project(self):
         if not self._current_project_path:
             path, _ = QFileDialog.getSaveFileName(
@@ -601,6 +615,9 @@ class MainWindow(QMainWindow):
         safe_path = self._current_project_path.replace("\\", "/")
         self._js(f'saveProject("{safe_path}");')
         self.project_label.setText(os.path.basename(self._current_project_path))
+        # FIX #1: сохраняем путь последнего проекта в config
+        self.config["last_project"] = self._current_project_path
+        save_config(self.config)
         self._js_log(f"Project save requested: {os.path.basename(self._current_project_path)}")
 
     def _open_project(self):
@@ -608,15 +625,10 @@ class MainWindow(QMainWindow):
             self, "Открыть проект", "projects/", "JSON (*.json)"
         )
         if not path: return
-        self._current_project_path = path
-        safe_path = path.replace("\\", "/")
-        self._js(f'setProjectPath("{safe_path}");')
-        with open(path, "r", encoding="utf-8") as f:
-            data = f.read()
-        self._js(f"loadProject({json.dumps(data)});")
-        self.project_label.setText(os.path.basename(path))
-        self._js("sendLayersToQt();")
-        self._js_log(f"Project opened: {os.path.basename(path)}")
+        # FIX #1: сохраняем путь последнего проекта в config
+        self.config["last_project"] = path
+        save_config(self.config)
+        self._load_project_from_path(path)
 
     def _export_png(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -692,14 +704,12 @@ class MainWindow(QMainWindow):
         if msg == "__SWITCH_SELECT__":
             self._set_tool("select")
             return
-        # FIX #7: двойной клик на текстовый объект — открыть диалог редактирования
         if msg.startswith("__EDIT_TEXT__:"):
             try:
                 payload = json.loads(msg[len("__EDIT_TEXT__:"):])
                 dlg = TextEditDialog(self, payload)
                 if dlg.exec() == QDialog.DialogCode.Accepted:
                     v = dlg.get_values()
-                    # Защищаем строки от встроенных кавычек JS
                     text_js   = json.dumps(v["text"])
                     color_js  = json.dumps(v["fontColor"])
                     bold_js   = str(v["fontBold"]).lower()
@@ -758,5 +768,6 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
     os.makedirs("projects", exist_ok=True)
     win = MainWindow()
-    win.show()
+    # FIX #1: разворачиваем окно на весь экран при запуске
+    win.showMaximized()
     sys.exit(app.exec())
