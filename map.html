@@ -54,11 +54,11 @@
     display: inline-block;
   }
 
-  /* FIX #4: курсор «палец» в режиме select */
-  body.tool-select #map { cursor: pointer; }
-  body.tool-brush  #map { cursor: crosshair; }
-  body.tool-eraser #map { cursor: none; }
-  body.tool-text   #map { cursor: text; }
+  /* FIX #4: курсор переключается через JS (map.getContainer) + CSS !important для .leaflet-interactive */
+  body.tool-select .leaflet-interactive { cursor: pointer !important; }
+  body.tool-brush  .leaflet-interactive { cursor: crosshair !important; }
+  body.tool-eraser .leaflet-interactive { cursor: none !important; }
+  body.tool-text   .leaflet-interactive { cursor: text !important; }
 
   /* FIX #5: курсор при перетаскивании текстового маркера */
   .text-marker-wrap { cursor: grab; }
@@ -71,8 +71,10 @@
   body.exporting #eraser-cursor             { display: none !important; }
 
   /* Пробел-drag: временный курсор */
-  body.space-pan #map { cursor: grab !important; }
-  body.space-pan.panning #map { cursor: grabbing !important; }
+  body.space-pan .leaflet-container { cursor: grab !important; }
+  body.space-pan .leaflet-interactive { cursor: grab !important; }
+  body.space-pan.panning .leaflet-container { cursor: grabbing !important; }
+  body.space-pan.panning .leaflet-interactive { cursor: grabbing !important; }
 </style>
 </head>
 <body class="tool-select">
@@ -250,6 +252,9 @@ function initMap(apiKey) {
   createLayer('layer_default', 'Слой 1');
   setActiveLayer('layer_default');
 
+  // FIX #4: установить курсор сразу после инициализации карты
+  applyToolCursor(activeTool);
+
   new QWebChannel(qt.webChannelTransport, function(channel) {
     bridge = channel.objects.bridge;
     log('Bridge ready');
@@ -336,6 +341,20 @@ function reorderLayers(ids) {
 // ═══════════════════════════════════════════════════════════
 //   ИНСТРУМЕНТЫ
 // ═══════════════════════════════════════════════════════════
+
+// FIX #4: вынесена отдельная функция применения курсора
+var cursorMap = {
+  'select':  'pointer',
+  'brush':   'crosshair',
+  'eraser':  'none',
+  'text':    'text'
+};
+function applyToolCursor(tool) {
+  if (!map) return;
+  map.getContainer().style.cursor = cursorMap[tool] || '';
+  log('Cursor set: ' + (cursorMap[tool] || 'default') + ' for tool=' + tool);
+}
+
 function setTool(params) {
   activeTool = params.tool;
   if (params.color)      brushColor = params.color;
@@ -347,6 +366,9 @@ function setTool(params) {
   if (typeof params.fontItalic !== 'undefined') fontItalic = params.fontItalic;
 
   document.body.className = 'tool-' + activeTool;
+
+  // FIX #4: явная установка курсора через map.getContainer() — перебивает inline-стиль Leaflet
+  applyToolCursor(activeTool);
 
   if (activeTool === 'select') {
     map.dragging.enable();
