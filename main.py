@@ -206,6 +206,7 @@ class MainWindow(QMainWindow):
 				self._font_bold            = True
 				self._font_italic          = False
 				self._export_path          = None
+				self._selected_obj_id      = None  # FIX BUG-10: инициализация
 
 				self._setup_ui()
 				self._setup_shortcuts()
@@ -472,26 +473,22 @@ class MainWindow(QMainWindow):
 				name, ok = QInputDialog.getText(self, "Новая группа", "Название группы:")
 				if not ok or not name: return
 				lid = f"group_{uuid.uuid4().hex[:8]}"
-				item = LayerItem(lid, name, is_group=True)
-				self.layer_tree.addTopLevelItem(item)
+				# FIX BUG-11: не строим дерево вручную — JS является источником правды
 				self._js(f'addLayerGroup("{lid}", {json.dumps(name)});')
+				self._js("sendLayersToQt();")
 				self._js_log(f"Group added: '{name}' id={lid}")
 
 		def _add_layer(self):
 				name, ok = QInputDialog.getText(self, "Новый слой", "Название слоя:")
 				if not ok or not name: return
 				lid = f"layer_{uuid.uuid4().hex[:8]}"
-				item = LayerItem(lid, name)
 				selected = self.layer_tree.currentItem()
 				parent_id = ""
 				if selected and isinstance(selected, LayerItem) and selected.is_group:
-						selected.addChild(item)
-						selected.setExpanded(True)
 						parent_id = selected.layer_id
-				else:
-						self.layer_tree.addTopLevelItem(item)
-				self._activate_layer(item)
+				# FIX BUG-11: не строим дерево вручную — JS является источником правды
 				self._js(f'addLayer("{lid}", {json.dumps(name)}, "{parent_id}");')
+				self._js("sendLayersToQt();")
 				self._js_log(f"Layer added: '{name}' id={lid} parent={parent_id}")
 
 		def _delete_layer(self):
@@ -502,10 +499,9 @@ class MainWindow(QMainWindow):
 						return
 				lid = item.layer_id
 				name = item.text(0)
-				root = self.layer_tree.invisibleRootItem()
-				parent = item.parent() or root
-				parent.removeChild(item)
+				# FIX BUG-11: не трогаем дерево вручную — JS пересоберёт через sendLayersToQt
 				self._js(f'removeLayer("{lid}");')
+				self._js("sendLayersToQt();")
 				self._active_layer_id = None
 				self._js_log(f"Layer deleted: '{name}' id={lid}")
 
@@ -723,8 +719,13 @@ class MainWindow(QMainWindow):
 				self._js_log("Undo requested")
 
 		def _delete_selected(self):
+				# FIX BUG-10: guard — если ничего не выбрано, не вызываем JS
+				if not self._selected_obj_id:
+						self._js_log("Delete: nothing selected")
+						return
 				obj_id = json.dumps(self._selected_obj_id)
 				self._js(f"deleteSelected({obj_id});")
+				self._selected_obj_id = None  # сбрасываем после удаления
 				self._js_log("Delete selected requested")
 
 		def _ask_api_key(self):
@@ -819,9 +820,10 @@ class MainWindow(QMainWindow):
 								self.status_lbl.setText(f"Ошибка редактирования текста: {e}")
 								self._js_log(f"ERROR __EDIT_TEXT__: {e}")
 						return
+				# FIX BUG-10: исправлен отступ (были пробелы вместо табов — блок не выполнялся)
 				if msg.startswith("__SELECTED__:"):
-				    self._selected_obj_id = msg[len("__SELECTED__:"):]
-				    return
+						self._selected_obj_id = msg[len("__SELECTED__:"):] or None
+						return
 				self.status_lbl.setText(msg)
 
 
@@ -847,7 +849,7 @@ QTreeWidget::item:hover    { background:#2a3a4a; }
 QTreeWidget::item:selected { background:#1a5276; }
 QSlider::groove:horizontal { background:#444; height:4px; border-radius:2px; }
 QSlider::handle:horizontal { background:#2e86c1; width:12px; height:12px;
-															border-radius:6px; margin:-4px 0; }
+														border-radius:6px; margin:-4px 0; }
 QComboBox   { background:#3a3a3a; border:1px solid #555; border-radius:4px; padding:2px 6px; }
 QComboBox::drop-down { border:none; }
 QSpinBox    { background:#3a3a3a; border:1px solid #555; border-radius:4px; padding:2px; }
@@ -855,7 +857,7 @@ QLabel      { color:#e0e0e0; }
 QCheckBox   { color:#e0e0e0; }
 QInputDialog { background:#2d2d2d; }
 QLineEdit   { background:#3a3a3a; border:1px solid #555; border-radius:4px;
-							color:#e0e0e0; padding:3px; }
+						color:#e0e0e0; padding:3px; }
 """
 
 
