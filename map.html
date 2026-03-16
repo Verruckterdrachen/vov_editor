@@ -377,7 +377,11 @@
 			layerOrder.push(id);
 			log('Group created: ' + name + ' id=' + id);
 		}
-		function addLayer(id, name) { createLayer(id, name); setActiveLayer(id); }
+		function addLayer(id, name, parentId) {
+			createLayer(id, name);
+			if (parentId) layers[id].parentId = parentId;
+			setActiveLayer(id);
+		}
 		function removeLayer(id) {
 			if (!layers[id]) return;
 			var name = layers[id].name;
@@ -393,6 +397,14 @@
 			if (layers[id].group) {
 				if (visible) map.addLayer(layers[id].group);
 				else map.removeLayer(layers[id].group);
+			}
+			// Если это группа — скрываем/показываем все дочерние слои
+			if (layers[id].isGroup) {
+				Object.keys(layers).forEach(function (lid) {
+					if (layers[lid].parentId === id) {
+						setLayerVisible(lid, visible);
+					}
+				});
 			}
 			log('Layer visible: ' + id + ' -> ' + visible);
 		}
@@ -813,6 +825,8 @@
 				}
 			}
 			log('Selected: ' + obj.type + ' id=' + obj.id);
+			// Сообщаем Python id выбранного объекта
+			if (bridge) bridge.onStatus('__SELECTED__:' + obj.id);
 			notifyStatus('Объект выбран: ' + obj.type);
 		}
 		function deselectAll() {
@@ -824,18 +838,27 @@
 				}
 			}
 			selectedObj = null;
+			if (bridge) bridge.onStatus('__SELECTED__:');  // пустой id = ничего не выбрано
 		}
-		function deleteSelected() {
-			if (!selectedObj) return;
-			var lid = selectedObj.layerId;
-			if (layers[lid]) {
-				layers[lid].group.removeLayer(selectedObj.leafletObj);
-				layers[lid].objects = layers[lid].objects.filter(function (o) { return o !== selectedObj; });
+		function deleteSelected(forceId) {
+			var obj = selectedObj;
+			// Fallback: если selectedObj потерян — ищем по forceId
+			if (!obj && forceId) {
+				Object.keys(layers).forEach(function (lid) {
+					layers[lid].objects.forEach(function (o) {
+						if (o.id === forceId) obj = o;
+					});
+				});
 			}
-			pushHistory({ action: 'delete', obj: selectedObj });
-			log('Deleted: ' + selectedObj.type + ' id=' + selectedObj.id);
-			selectedObj = null;
-			// FIX #2: синхронизировать панель слоёв после удаления
+			if (!obj) { log('deleteSelected: nothing selected'); return; }
+			var lid = obj.layerId;
+			if (layers[lid]) {
+				layers[lid].group.removeLayer(obj.leafletObj);
+				layers[lid].objects = layers[lid].objects.filter(function (o) { return o !== obj; });
+			}
+			pushHistory({ action: 'delete', obj: obj });
+			log('Deleted: ' + obj.type + ' id=' + obj.id);
+			if (selectedObj === obj) selectedObj = null;
 			sendLayersToQt();
 			notifyStatus('Объект удалён');
 		}
@@ -879,20 +902,41 @@
 			var data = {
 				version: '1.0', center: [map.getCenter().lat, map.getCenter().lng],
 				zoom: map.getZoom(), tileType: currentTileType, activeLayerId: activeLayerId,
-				layers: layerOrder.map(function (lid) {
-					var lyr = layers[lid];
-					return {
-						id: lid, name: lyr.name, visible: lyr.visible, isGroup: lyr.isGroup || false,
-						objects: (lyr.objects || []).map(serializeObject)
-					};
-				})
+				layers: (function () {
+					var result = [];
+					var addedIds = {};
+					layerOrder.forEach(function (lid) {
+						var lyr = layers[lid];
+						if (addedIds[lid]) return;
+						if (lyr.isGroup) {
+							var grpNode = { id: lid, name: lyr.name, visible: lyr.visible, isGroup: true, children: [] };
+							layerOrder.forEach(function (cid) {
+								if (layers[cid] && layers[cid].parentId === lid) {
+									grpNode.children.push({
+										id: cid, name: layers[cid].name, visible: layers[cid].visible,
+										objects: (layers[cid].objects || []).map(serializeObject)
+									});
+									addedIds[cid] = true;
+								}
+							});
+							result.push(grpNode);
+						} else if (!lyr.parentId) {
+							result.push({
+								id: lid, name: lyr.name, visible: lyr.visible, isGroup: false,
+								objects: (lyr.objects || []).map(serializeObject)
+							});
+						}
+						addedIds[lid] = true;
+					});
+					return result;
+				})()
 			};
 			if (bridge) bridge.saveProjectData(JSON.stringify(data, null, 2));
 			log('Project saved to: ' + currentProjectPath);
 		}
 
 		function serializeObject(obj) {
-			var s = { id: obj.id, type: obj.type, layerId: obj.layerId };
+			var s = { id: obj.id, type: obj.type, layerId: obj.layerId, visible: obj.visible !== false };
 			if (obj.type === 'polyline') { s.latlngs = obj.latlngs; s.color = obj.color; s.weight = obj.weight; }
 			else if (obj.type === 'text') { s.text = obj.text; s.latlng = obj.latlng; s.fontSize = obj.fontSize; s.fontColor = obj.fontColor; s.fontBold = obj.fontBold; s.fontItalic = obj.fontItalic; }
 			else if (obj.type === 'image') { s.url = obj.url; s.bounds = obj.bounds; s.opacity = obj.opacity; s.latlng = obj.latlng; }
@@ -910,13 +954,23 @@
 			if (data.tileType) changeTileLayer(data.tileType, yandexApiKey);
 			(data.layers || []).forEach(function (lyr) {
 				if (lyr.isGroup) {
-					layers[lyr.id] = { name: lyr.name, visible: lyr.visible, group: null, objects: [], isGroup: true };
+					layers[lyr.id] = { name: lyr.name, visible: lyr.visible !== false, group: null, objects: [], isGroup: true };
+					layerOrder.push(lyr.id);
+					// Восстанавливаем дочерние слои внутри группы
+					(lyr.children || []).forEach(function (child) {
+						var lg = L.layerGroup();
+						var childVisible = child.visible !== false && lyr.visible !== false;
+						if (childVisible) lg.addTo(map);
+						layers[child.id] = { name: child.name, visible: child.visible !== false, group: lg, objects: [], parentId: lyr.id };
+						layerOrder.push(child.id);
+						(child.objects || []).forEach(function (obj) { restoreObject(obj, child.id); });
+					});
 				} else {
-					var lg = L.layerGroup(); if (lyr.visible) lg.addTo(map);
-					layers[lyr.id] = { name: lyr.name, visible: lyr.visible, group: lg, objects: [] };
+					var lg = L.layerGroup(); if (lyr.visible !== false) lg.addTo(map);
+					layers[lyr.id] = { name: lyr.name, visible: lyr.visible !== false, group: lg, objects: [] };
+					layerOrder.push(lyr.id);
+					(lyr.objects || []).forEach(function (obj) { restoreObject(obj, lyr.id); });
 				}
-				layerOrder.push(lyr.id);
-				(lyr.objects || []).forEach(function (obj) { restoreObject(obj, lyr.id); });
 			});
 			if (data.activeLayerId && layers[data.activeLayerId]) setActiveLayer(data.activeLayerId);
 			sendLayersToQt();
@@ -965,20 +1019,58 @@
 		function sendLayersToQt() {
 			if (!bridge) return;
 			var result = [];
+			var addedIds = {};
+			var currentGroup = null;
+
 			layerOrder.forEach(function (lid) {
+				if (addedIds[lid]) return;
 				var lyr = layers[lid];
 				if (lyr.isGroup) {
-					result.push({ id: lid, name: lyr.name, children: [] });
+					currentGroup = { id: lid, name: lyr.name, isGroup: true, visible: lyr.visible, children: [] };
+					result.push(currentGroup);
+					addedIds[lid] = true;
 				} else {
-					// FIX #2: передаём кол-во объектов для отображения в панели
-					var count = (lyr.objects || []).length;
-					var grp = result[result.length - 1];
-					if (grp && grp.children) grp.children.push({ id: lid, name: lyr.name, objectCount: count });
-					else result.push({ id: lid, name: lyr.name, children: [], objectCount: count });
+					var objects = (lyr.objects || []).map(function (o) {
+						return {
+							id: o.id, type: o.type,
+							label: o.type === 'text' ? o.text : (o.type === 'image' ? 'Изображение' : 'Линия'),
+							visible: o.visible !== false
+						};
+					});
+					var node = { id: lid, name: lyr.name, isGroup: false, visible: lyr.visible, objects: objects };
+					// Слой вложен если: явный parentId OR идёт после группы в layerOrder
+					if (lyr.parentId) {
+						// явно вложенный
+						if (currentGroup) currentGroup.children.push(node);
+						else result.push(node);
+					} else if (currentGroup && !lyr.parentId) {
+						// Идёт после группы в layerOrder без явного parentId —
+						// это независимый слой, сбрасываем группу
+						currentGroup = null;
+						result.push(node);
+					} else {
+						result.push(node);
+					}
+					addedIds[lid] = true;
 				}
 			});
 			bridge.onLayersData(JSON.stringify(result));
 			log('Layers sent to Qt: ' + result.length + ' items');
+		}
+
+		function setObjectVisible(objId, visible) {
+			Object.keys(layers).forEach(function (lid) {
+				layers[lid].objects.forEach(function (o) {
+					if (o.id === objId) {
+						o.visible = visible;
+						if (o.leafletObj) {
+							if (visible) layers[lid].group.addLayer(o.leafletObj);
+							else layers[lid].group.removeLayer(o.leafletObj);
+						}
+						log('Object visible: ' + objId + ' -> ' + visible);
+					}
+				});
+			});
 		}
 
 		function notifyStatus(msg) { if (bridge) bridge.onStatus(msg); }
