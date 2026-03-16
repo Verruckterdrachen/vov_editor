@@ -219,14 +219,28 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         root_layout.addWidget(self._build_topbar())
+
         work = QHBoxLayout()
         work.setContentsMargins(0, 0, 0, 0)
         work.setSpacing(0)
-        work.addWidget(self._build_layers_panel())
-        work.addWidget(self._build_webview(), stretch=1)
+
+        # СЛЕВА — инструменты
         work.addWidget(self._build_tools_panel())
+
+        # ЦЕНТР — карта
+        work.addWidget(self._build_webview(), stretch=1)
+
+        # СПРАВА — настройки инструментов сверху, слои снизу
+        right_panel = QWidget()
+        right_panel.setObjectName("rightPanel")
+        right_lay = QVBoxLayout(right_panel)
+        right_lay.setContentsMargins(0, 0, 0, 0)
+        right_lay.setSpacing(0)
+        right_lay.addWidget(self._build_statusbar())       # настройки — СВЕРХУ
+        right_lay.addWidget(self._build_layers_panel(), stretch=1)  # слои — СНИЗУ
+        work.addWidget(right_panel)
+
         root_layout.addLayout(work, stretch=1)
-        root_layout.addWidget(self._build_statusbar())
 
     def _build_topbar(self):
         bar = QWidget()
@@ -333,58 +347,84 @@ class MainWindow(QMainWindow):
 
     def _build_statusbar(self):
         bar = QWidget()
-        bar.setFixedHeight(44)
+        bar.setFixedWidth(250)
         bar.setObjectName("statusBar")
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(8, 4, 8, 4)
-        lay.setSpacing(12)
-        self.color_btn = QPushButton("  🎨 Цвет  ")
-        self.color_btn.setFixedHeight(32)
+        lay = QVBoxLayout(bar)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(6)
+
+        lbl = QLabel("НАСТРОЙКИ")
+        lbl.setStyleSheet("color:#aaa;font-size:11px;font-weight:bold;")
+        lay.addWidget(lbl)
+
+        # Цвет кисти
+        self.color_btn = QPushButton("  🎨 Цвет кисти  ")
+        self.color_btn.setFixedHeight(28)
         self.color_btn.clicked.connect(self._pick_brush_color)
         self._update_color_button()
         lay.addWidget(self.color_btn)
-        lay.addWidget(QLabel("Толщина:"))
+
+        # Толщина кисти
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("Толщина:"))
         self.brush_slider = QSlider(Qt.Orientation.Horizontal)
         self.brush_slider.setRange(1, 20)
         self.brush_slider.setValue(self._brush_size)
-        self.brush_slider.setFixedWidth(100)
         self.brush_slider.valueChanged.connect(self._on_brush_size_changed)
-        lay.addWidget(self.brush_slider)
+        row1.addWidget(self.brush_slider)
         self.brush_size_lbl = QLabel(str(self._brush_size))
-        lay.addWidget(self.brush_size_lbl)
-        lay.addSpacing(8)
-        lay.addWidget(QLabel("Ластик:"))
+        self.brush_size_lbl.setFixedWidth(20)
+        row1.addWidget(self.brush_size_lbl)
+        lay.addLayout(row1)
+
+        # Ластик
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Ластик:"))
         self.eraser_slider = QSlider(Qt.Orientation.Horizontal)
         self.eraser_slider.setRange(5, 100)
         self.eraser_slider.setValue(self._eraser_size)
-        self.eraser_slider.setFixedWidth(100)
         self.eraser_slider.valueChanged.connect(self._on_eraser_size_changed)
-        lay.addWidget(self.eraser_slider)
+        row2.addWidget(self.eraser_slider)
         self.eraser_size_lbl = QLabel(str(self._eraser_size))
-        lay.addWidget(self.eraser_size_lbl)
-        lay.addSpacing(8)
-        lay.addWidget(QLabel("Шрифт:"))
+        self.eraser_size_lbl.setFixedWidth(24)
+        row2.addWidget(self.eraser_size_lbl)
+        lay.addLayout(row2)
+
+        # Шрифт
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("Шрифт:"))
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(8, 72)
         self.font_size_spin.setValue(self._font_size)
-        self.font_size_spin.setFixedWidth(60)
+        self.font_size_spin.setFixedWidth(56)
         self.font_size_spin.valueChanged.connect(self._on_font_size_changed)
-        lay.addWidget(self.font_size_spin)
+        row3.addWidget(self.font_size_spin)
         self.font_color_btn = QPushButton("🔤 Цвет")
-        self.font_color_btn.setFixedHeight(30)
+        self.font_color_btn.setFixedHeight(26)
         self.font_color_btn.clicked.connect(self._pick_font_color)
-        lay.addWidget(self.font_color_btn)
+        row3.addWidget(self.font_color_btn)
+        lay.addLayout(row3)
+
+        # Начертание
+        row4 = QHBoxLayout()
         self.bold_cb = QCheckBox("Ж")
-        self.bold_cb.setChecked(True)				
+        self.bold_cb.setChecked(True)
         self.bold_cb.stateChanged.connect(self._on_font_bold_changed)
-        lay.addWidget(self.bold_cb)
+        row4.addWidget(self.bold_cb)
         self.italic_cb = QCheckBox("К")
         self.italic_cb.stateChanged.connect(self._on_font_italic_changed)
-        lay.addWidget(self.italic_cb)
+        row4.addWidget(self.italic_cb)
+        row4.addStretch()
+        lay.addLayout(row4)
+
         lay.addStretch()
+
+        # Статус
         self.status_lbl = QLabel("Готово")
-        self.status_lbl.setStyleSheet("color:#888;")
+        self.status_lbl.setStyleSheet("color:#888;font-size:11px;")
+        self.status_lbl.setWordWrap(True)
         lay.addWidget(self.status_lbl)
+
         return bar
 
     def _setup_shortcuts(self):
@@ -737,9 +777,10 @@ DARK_STYLE = """
 QWidget { background:#1e1e1e; color:#e0e0e0; font-family:'Segoe UI'; font-size:12px; }
 QMainWindow { background:#1e1e1e; }
 #topbar   { background:#2d2d2d; border-bottom:1px solid #444; }
-#layersPanel { background:#252525; border-right:1px solid #444; }
-#toolsPanel  { background:#252525; border-left:1px solid #444; }
-#statusBar   { background:#2d2d2d; border-top:1px solid #444; }
+#layersPanel { background:#252525; border-top:1px solid #444; }
+#toolsPanel  { background:#252525; border-right:1px solid #444; }
+#statusBar   { background:#2d2d2d; border-left:1px solid #444; border-bottom:1px solid #444; }
+#rightPanel  { background:#252525; border-left:1px solid #444; }
 QPushButton  { background:#3a3a3a; color:#e0e0e0; border:1px solid #555;
                border-radius:4px; padding:3px 10px; }
 QPushButton:hover   { background:#4a4a4a; }
