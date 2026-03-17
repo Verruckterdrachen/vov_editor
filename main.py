@@ -16,10 +16,10 @@ from PyQt6.QtWidgets import (
 		QInputDialog, QMessageBox, QSplitter, QTreeWidget, QTreeWidgetItem,
 		QToolButton, QStatusBar, QComboBox, QSpinBox, QCheckBox, QDialog,
 		QDialogButtonBox, QLineEdit, QFormLayout, QGroupBox, QSizePolicy,
-		QAbstractItemView
+		QAbstractItemView, QStyledItemDelegate
 )
 from PyQt6.QtCore import (
-		Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QSize, QTimer
+		Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QSize, QTimer, QRect
 )
 from PyQt6.QtGui import QIcon, QColor, QKeySequence, QShortcut, QFont
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -169,11 +169,20 @@ class LayerItem(QTreeWidgetItem):
 				self._update_icon()
 
 		def _update_icon(self):
-				self.setText(1, "👁" if self.visible else "  ")
+				if self.visible:
+						self.setText(1, "👁")
+						self.setBackground(1, QColor("transparent"))
+				else:
+						self.setText(1, "  ")
+						self.setBackground(1, QColor("#3a3a3a"))
+				tree = self.treeWidget()
+				if tree:
+						tree.viewport().update()
 
 		def toggle_visibility(self):
 				self.visible = not self.visible
 				self._update_icon()
+				bg = self.background(1).color()
 
 
 
@@ -186,6 +195,35 @@ class LayerTree(QTreeWidget):
 				super().dropEvent(event)
 				self.orderChanged.emit()
 
+class EyeColumnDelegate(QStyledItemDelegate):
+		def paint(self, painter, option, index):
+				if index.column() == 1:
+						# Берём цвет фона который мы установили через setBackground
+						bg_brush = index.data(Qt.ItemDataRole.BackgroundRole)
+						if bg_brush is not None:
+								color = bg_brush if isinstance(bg_brush, QColor) else bg_brush.color()
+								if color.alpha() > 0:
+									r = option.rect
+									size = min(r.width(), r.height()) - 6  # квадрат, отступ 3px
+									x = r.x() + (r.width() - size) // 2
+									y = r.y() + (r.height() - size) // 2
+									from PyQt6.QtCore import QRect
+									sq = QRect(x, y, size, size)
+
+									painter.fillRect(sq, color)
+									painter.setPen(QColor("#1a1a1a"))
+									painter.drawLine(sq.topLeft(), sq.topRight())
+									painter.drawLine(sq.topLeft(), sq.bottomLeft())
+									painter.setPen(QColor("#5a5a5a"))
+									painter.drawLine(sq.bottomLeft(), sq.bottomRight())
+									painter.drawLine(sq.topRight(), sq.bottomRight())
+						# Рисуем текст (глазок) поверх фона
+						text = index.data(Qt.ItemDataRole.DisplayRole)
+						if text:
+								painter.setPen(QColor("#e0e0e0"))
+								painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, text)
+				else:
+						super().paint(painter, option, index)
 
 # ── Главное окно ─────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
@@ -297,14 +335,23 @@ class MainWindow(QMainWindow):
 				self.layer_tree = LayerTree()
 				self.layer_tree.setColumnCount(2)
 				self.layer_tree.setHeaderHidden(True)
-				self.layer_tree.setColumnWidth(0, 190)
-				self.layer_tree.setColumnWidth(1, 28)
+				self.layer_tree.setColumnWidth(0, 190)  # имя — колонка 0 (иерархия)
+				self.layer_tree.setColumnWidth(1, 28)   # глаз — колонка 1
+				# Визуально переставить колонку 1 (глаз) на позицию 0:
+				self.layer_tree.header().moveSection(1, 0)
 				self.layer_tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
 				self.layer_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 				self.layer_tree.itemClicked.connect(self._on_layer_clicked)
 				self.layer_tree.itemDoubleClicked.connect(self._on_layer_double_clicked)
 				self.layer_tree.orderChanged.connect(self._on_layer_order_changed)
+				self.layer_tree.setStyleSheet("""
+						QTreeWidget { background:#1e1e1e; border:none; color:#e0e0e0; }
+						QTreeWidget::item { border-bottom: 1px solid #2a2a2a; padding: 2px 0px; }
+						QTreeWidget::item:hover    { background:#2a3a4a; }
+						QTreeWidget::item:selected { background:#1a5276; }
+				""")
 				lay.addWidget(self.layer_tree)
+				self.layer_tree.setItemDelegate(EyeColumnDelegate(self.layer_tree))
 				return panel
 
 		def _build_webview(self):
@@ -509,6 +556,7 @@ class MainWindow(QMainWindow):
 				if not isinstance(item, LayerItem): return
 				if col == 1:
 						item.toggle_visibility()
+						bg = item.background(1).color()
 						vis = item.visible
 						if item.object_type:
 								# Скрытие отдельного объекта
@@ -533,6 +581,7 @@ class MainWindow(QMainWindow):
 								continue  # пропускаем объекты-листья
 						child.visible = visible
 						child._update_icon()
+						bg = child.background(1).color()
 						self._js(f'setLayerVisible("{child.layer_id}", {str(visible).lower()});')
 						self._js_log(f"Child visibility: '{child.text(0)}' -> {visible}")
 						if child.is_group:
@@ -542,10 +591,12 @@ class MainWindow(QMainWindow):
 				if not isinstance(item, LayerItem): return
 				if item.object_type:
 						return  # двойной клик по объекту-листу — не переименовываем
-				old_name = item.text(0)
+				raw_name = item.text(0)
+				old_name = raw_name.replace("📁 ", "", 1) if item.is_group else raw_name
 				name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:", text=old_name)
 				if ok and name:
-						item.setText(0, name)
+						display = ("📁 " + name) if item.is_group else name
+						item.setText(0, display)
 						self._js(f'renameLayer("{item.layer_id}", {json.dumps(name)});')
 						self._js_log(f"Layer renamed: '{old_name}' -> '{name}'")
 
@@ -749,7 +800,7 @@ class MainWindow(QMainWindow):
 
 						for node in layers:
 								if node.get("isGroup"):
-										g_item = LayerItem(node["id"], node["name"], is_group=True)
+										g_item = LayerItem(node["id"], "📁 " + node["name"], is_group=True)
 										g_item.visible = node.get("visible", True)
 										g_item._update_icon()
 										self.layer_tree.addTopLevelItem(g_item)
@@ -852,10 +903,6 @@ QPushButton:pressed { background:#2a5298; }
 QToolButton { background:#2d2d2d; border:none; border-radius:6px; color:#e0e0e0; }
 QToolButton:hover   { background:#3a3a3a; }
 QToolButton:checked { background:#1a5276; border:1px solid #2e86c1; }
-QTreeWidget { background:#1e1e1e; border:none; color:#e0e0e0; }
-QTreeWidget::item { border-bottom: 1px solid #2a2a2a; padding: 2px 0px; }
-QTreeWidget::item:hover    { background:#2a3a4a; }
-QTreeWidget::item:selected { background:#1a5276; }
 QSlider::groove:horizontal { background:#444; height:4px; border-radius:2px; }
 QSlider::handle:horizontal { background:#2e86c1; width:12px; height:12px;
 														border-radius:6px; margin:-4px 0; }
@@ -876,4 +923,6 @@ if __name__ == "__main__":
 		os.makedirs("projects", exist_ok=True)
 		win = MainWindow()
 		win.showMaximized()
+		win.raise_()
+		win.activateWindow()
 		sys.exit(app.exec())
