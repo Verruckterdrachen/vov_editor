@@ -249,7 +249,7 @@
 		var layers = {};
 		var layerOrder = [];
 
-		var history = [];
+		var undoHistory = [];
 		var MAX_HISTORY = 50;
 
 		var selectedObj = null;
@@ -336,8 +336,11 @@
 
 			new QWebChannel(qt.webChannelTransport, function (channel) {
 				bridge = channel.objects.bridge;
-				log('Bridge ready');
+				log('[Bridge] QWebChannel initialized, bridge object received');
 				bridge.onStatus('Карта готова');
+				// Отправляем актуальное состояние слоёв сразу после готовности моста
+				log('[Bridge] Sending initial layers state to Qt...');
+				sendLayersToQt();
 			});
 		}
 
@@ -729,8 +732,9 @@
 
 			layers[activeLayerId].objects.push(obj);
 			pushHistory({ action: 'add', obj: obj });
-			log('Text placed: "' + text + '"');
-			// FIX #2: синхронизировать панель слоёв после добавления текста
+			log('[placeText] Text placed: "' + text + '" id=' + obj.id + ' layer=' + activeLayerId);
+			log('[placeText] objects in layer now: ' + layers[activeLayerId].objects.length);
+			// Сначала синхронизируем — до notifyStatus, чтобы не перебивать очередь bridge
 			sendLayersToQt();
 			notifyStatus('Текст добавлен');
 		}
@@ -752,12 +756,14 @@
 		// Вызывается из Python после закрытия диалога
 		function applyTextEdit(id, text, fSize, fColor, fBold, fItalic) {
 			var obj = null;
+			var foundInLayer = null;
 			Object.keys(layers).forEach(function (layerId) {
 				layers[layerId].objects.forEach(function (o) {
-					if (o.id === id) { obj = o; }
+					if (o.id === id) { obj = o; foundInLayer = layerId; }
 				});
 			});
-			if (!obj) { log('applyTextEdit: obj not found id=' + id); return; }
+			if (!obj) { log('[applyTextEdit] ERROR: obj not found id=' + id); return; }
+			log('[applyTextEdit] found obj id=' + id + ' in layer=' + foundInLayer + ' old_text="' + obj.text + '" -> new_text="' + text + '"');
 			obj.text = text;
 			obj.fontSize = fSize;
 			obj.fontColor = fColor;
@@ -770,7 +776,8 @@
 				L.DomEvent.stopPropagation(ev);
 				openTextEditDialog(obj, obj.leafletObj);
 			});
-			log('Text edited: id=' + id + ' text="' + text + '"');
+			log('[applyTextEdit] icon updated, syncing layers panel...');
+			sendLayersToQt();
 			notifyStatus('Текст обновлён');
 		}
 
@@ -841,40 +848,49 @@
 			if (bridge) bridge.onStatus('__SELECTED__:');  // пустой id = ничего не выбрано
 		}
 		function deleteSelected(forceId) {
-			var obj = selectedObj;
-			// Fallback: если selectedObj потерян — ищем по forceId
-			if (!obj && forceId) {
-				Object.keys(layers).forEach(function (lid) {
-					layers[lid].objects.forEach(function (o) {
-						if (o.id === forceId) obj = o;
+			try {
+				var obj = selectedObj;
+				if (!obj && forceId) {
+					Object.keys(layers).forEach(function (lid) {
+						layers[lid].objects.forEach(function (o) {
+							if (o.id === forceId) obj = o;
+						});
 					});
-				});
+				}
+				if (!obj) { log('[deleteSelected] nothing selected'); return; }
+				var lid = obj.layerId;
+				log('[deleteSelected] removing ' + obj.type + ' id=' + obj.id + ' from layer=' + lid);
+				if (layers[lid]) {
+					layers[lid].group.removeLayer(obj.leafletObj);
+					layers[lid].objects = layers[lid].objects.filter(function (o) { return o !== obj; });
+					log('[deleteSelected] layer objects remaining: ' + layers[lid].objects.length);
+				} else {
+					log('[deleteSelected] ERROR: layer ' + lid + ' not found!');
+				}
+				log('[deleteSelected] calling pushHistory...');
+				pushHistory({ action: 'delete', obj: obj });
+				log('[deleteSelected] pushHistory OK, calling sendLayersToQt...');
+				if (selectedObj === obj) selectedObj = null;
+				sendLayersToQt();
+				notifyStatus('Объект удалён');
+			} catch (e) {
+				log('[deleteSelected] EXCEPTION: ' + e + ' | stack: ' + (e.stack || 'n/a'));
 			}
-			if (!obj) { log('deleteSelected: nothing selected'); return; }
-			var lid = obj.layerId;
-			if (layers[lid]) {
-				layers[lid].group.removeLayer(obj.leafletObj);
-				layers[lid].objects = layers[lid].objects.filter(function (o) { return o !== obj; });
-			}
-			pushHistory({ action: 'delete', obj: obj });
-			log('Deleted: ' + obj.type + ' id=' + obj.id);
-			if (selectedObj === obj) selectedObj = null;
-			sendLayersToQt();
-			notifyStatus('Объект удалён');
 		}
+
 
 		// ═══════════════════════════════════════════════════════════
 		//   ИСТОРИЯ
 		// ═══════════════════════════════════════════════════════════
 		function pushHistory(record) {
-			history.push(record);
-			if (history.length > MAX_HISTORY) history.shift();
-			log('History push: ' + record.action + ' (' + history.length + ' total)');
+			undoHistory.push(record);
+			if (undoHistory.length > MAX_HISTORY) history.shift();
+			log('History push: ' + record.action + ' (' + undoHistory.length + ' total)');
 		}
 
 		function undoAction() {
-			if (history.length === 0) { notifyStatus('Нечего отменять'); log('Undo: history empty'); return; }
-			var rec = history.pop();
+			if (undoHistory.length === 0) { notifyStatus('Нечего отменять'); log('Undo: history empty'); return; }
+			var rec = undoHistory.pop();
 			log('Undo: ' + rec.action + ' ' + rec.obj.type);
 			if (rec.action === 'add') {
 				var obj = rec.obj;
@@ -949,7 +965,7 @@
 			Object.keys(layers).forEach(function (lid) {
 				if (layers[lid].group) { layers[lid].group.clearLayers(); map.removeLayer(layers[lid].group); }
 			});
-			layers = {}; layerOrder = []; history = [];
+			layers = {}; layerOrder = []; undoHistory = [];
 			if (data.center) map.setView(data.center, data.zoom || 5);
 			if (data.tileType) changeTileLayer(data.tileType, yandexApiKey);
 			(data.layers || []).forEach(function (lyr) {
@@ -1017,7 +1033,11 @@
 		//   ДЕРЕВО СЛОЁВ
 		// ═══════════════════════════════════════════════════════════
 		function sendLayersToQt() {
-			if (!bridge) return;
+			if (!bridge) {
+				log('[WARN] sendLayersToQt: bridge not ready, retry in 200ms...');
+				setTimeout(sendLayersToQt, 200);
+				return;
+			}
 			var result = [];
 			var addedIds = {};
 			var currentGroup = null;
@@ -1038,14 +1058,10 @@
 						};
 					});
 					var node = { id: lid, name: lyr.name, isGroup: false, visible: lyr.visible, objects: objects };
-					// Слой вложен если: явный parentId OR идёт после группы в layerOrder
 					if (lyr.parentId) {
-						// явно вложенный
 						if (currentGroup) currentGroup.children.push(node);
 						else result.push(node);
 					} else if (currentGroup && !lyr.parentId) {
-						// Идёт после группы в layerOrder без явного parentId —
-						// это независимый слой, сбрасываем группу
 						currentGroup = null;
 						result.push(node);
 					} else {
@@ -1054,8 +1070,21 @@
 					addedIds[lid] = true;
 				}
 			});
-			bridge.onLayersData(JSON.stringify(result));
-			log('Layers sent to Qt: ' + result.length + ' items');
+
+			var totalObjects = result.reduce(function (sum, node) {
+				if (node.isGroup) {
+					return sum + (node.children || []).reduce(function (s, c) { return s + (c.objects || []).length; }, 0);
+				}
+				return sum + (node.objects || []).length;
+			}, 0);
+
+			log('[sendLayersToQt] sending ' + result.length + ' top-level nodes, ' + totalObjects + ' total objects');
+			try {
+				bridge.onLayersData(JSON.stringify(result));
+				log('[sendLayersToQt] onLayersData call OK');
+			} catch (e) {
+				log('[sendLayersToQt] ERROR calling onLayersData: ' + e);
+			}
 		}
 
 		function setObjectVisible(objId, visible) {

@@ -444,8 +444,8 @@ class MainWindow(QMainWindow):
 				self._js_log("App started, map loaded")
 				last = self.config.get("last_project", "")
 				if last and os.path.exists(last):
-						QTimer.singleShot(300, lambda: self._load_project_from_path(last))
-						self._js_log(f"Auto-opening last project: {os.path.basename(last)}")
+					self._js_log(f"Auto-opening last project: {os.path.basename(last)} (timer=800ms)")
+					QTimer.singleShot(800, lambda: self._load_project_from_path(last))
 
 		def _set_tool(self, tool: str):
 				self._current_tool = tool
@@ -742,6 +742,7 @@ class MainWindow(QMainWindow):
 
 		def receive_layers(self, layers_json: str):
 				try:
+						self._js_log(f"receive_layers CALLED, json len={len(layers_json)}")
 						layers = json.loads(layers_json)
 						active_id = self._active_layer_id
 						self.layer_tree.clear()
@@ -770,7 +771,15 @@ class MainWindow(QMainWindow):
 										if node["id"] == active_id:
 												self._activate_layer(l_item)
 
-						self._js_log(f"Layers tree rebuilt: {len(layers)} top-level items")
+						total_objects = sum(
+								sum(len(lyr.get("objects", [])) for lyr in node.get("children", []))
+								if node.get("isGroup") else len(node.get("objects", []))
+								for node in layers
+						)
+						self._js_log(
+								f"receive_layers OK: {len(layers)} top-level nodes, "
+								f"{total_objects} total objects"
+						)
 				except Exception as e:
 						self.status_lbl.setText(f"Ошибка загрузки слоёв: {e}")
 						self._js_log(f"ERROR receive_layers: {e}")
