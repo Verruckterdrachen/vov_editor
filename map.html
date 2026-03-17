@@ -363,6 +363,9 @@
 				tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM', maxZoom: 19 });
 			}
 			tileLayer.addTo(map);
+			// TASK-8 fix: принудительное обновление после смены тайлов
+			map.invalidateSize();
+			tileLayer.redraw();
 			log('Tile layer: ' + type + (yandexApiKey ? ' (Yandex)' : ' (OSM)'));
 		}
 
@@ -884,7 +887,8 @@
 		// ═══════════════════════════════════════════════════════════
 		function pushHistory(record) {
 			undoHistory.push(record);
-			if (undoHistory.length > MAX_HISTORY) history.shift();
+			// BUG-PUSHHISTORY fix: было history.shift() — конфликт с window.history
+			if (undoHistory.length > MAX_HISTORY) undoHistory.shift();
 			log('History push: ' + record.action + ' (' + undoHistory.length + ' total)');
 		}
 
