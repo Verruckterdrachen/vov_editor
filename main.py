@@ -570,6 +570,11 @@ class MainWindow(QMainWindow):
 				else:
 						if not item.is_group and not item.object_type:
 								self._activate_layer(item)
+						elif item.object_type:
+								self._js(f'selectObjectById("{item.layer_id}")')
+								self._clear_highlight(self.layer_tree.invisibleRootItem())
+								item.setBackground(0, QColor("#1a5276"))
+								item.setBackground(1, QColor("#1a5276"))
 
 		def _set_children_visibility(self, parent_item: LayerItem, visible: bool):
 				"""Рекурсивно применяет видимость ко всем дочерним LayerItem (слоям, не объектам)."""
@@ -615,6 +620,21 @@ class MainWindow(QMainWindow):
 				item.setBackground(1, QColor("transparent"))
 				for i in range(item.childCount()):
 						self._clear_highlight(item.child(i))
+
+		def _highlight_tree_item(self, obj_id: str | None):
+				if not obj_id:
+						self.layer_tree.setCurrentItem(None)
+						return
+				def find(item):
+						if isinstance(item, LayerItem) and item.layer_id == obj_id:
+								self.layer_tree.setCurrentItem(item)
+								self.layer_tree.scrollToItem(item)
+								return True
+						for i in range(item.childCount()):
+								if find(item.child(i)):
+										return True
+						return False
+				find(self.layer_tree.invisibleRootItem())
 
 		def _on_layer_order_changed(self):
 				order = []
@@ -770,13 +790,18 @@ class MainWindow(QMainWindow):
 				self._js_log("Undo requested")
 
 		def _delete_selected(self):
-				# FIX BUG-10: guard — если ничего не выбрано, не вызываем JS
+				# Сначала проверяем — выделен ли слой/группа в дереве
+				item = self.layer_tree.currentItem()
+				if isinstance(item, LayerItem) and not item.object_type:
+						self._delete_layer()
+						return
+				# Иначе — удаляем выбранный объект на карте
 				if not self._selected_obj_id:
 						self._js_log("Delete: nothing selected")
 						return
 				obj_id = json.dumps(self._selected_obj_id)
 				self._js(f"deleteSelected({obj_id});")
-				self._selected_obj_id = None  # сбрасываем после удаления
+				self._selected_obj_id = None
 				self._js_log("Delete selected requested")
 
 		def _ask_api_key(self):
@@ -883,6 +908,7 @@ class MainWindow(QMainWindow):
 				# FIX BUG-10: исправлен отступ (были пробелы вместо табов — блок не выполнялся)
 				if msg.startswith("__SELECTED__:"):
 						self._selected_obj_id = msg[len("__SELECTED__:"):] or None
+						self._highlight_tree_item(self._selected_obj_id)
 						return
 				self.status_lbl.setText(msg)
 

@@ -489,6 +489,7 @@
 			if (activeTool === 'brush') { startDrawing(e.latlng); }
 			else if (activeTool === 'eraser') { isErasing = true; eraserPath = [e.latlng]; }
 			else if (activeTool === 'text') { placeText(e.latlng); }
+			else if (activeTool === 'select') { deselectAll(); }  // ← добавить
 		}
 		function onMapMouseMove(e) {
 			if (activeTool === 'eraser' && !spaceDown) {
@@ -717,6 +718,7 @@
 
 			marker.on('dragstart', function () {
 				if (marker._icon) marker._icon.style.cursor = 'grabbing';
+				selectObject(obj);  // ← добавить
 			});
 			marker.on('dragend', function (ev) {
 				var ll = ev.target.getLatLng();
@@ -850,6 +852,16 @@
 			selectedObj = null;
 			if (bridge) bridge.onStatus('__SELECTED__:');  // пустой id = ничего не выбрано
 		}
+		function selectObjectById(id) {
+			var found = null;
+			Object.keys(layers).forEach(function (lid) {
+				layers[lid].objects.forEach(function (o) {
+					if (o.id === id) found = o;
+				});
+			});
+			if (found) selectObject(found);
+			else log('[selectObjectById] not found: ' + id);
+		}
 		function deleteSelected(forceId) {
 			try {
 				var obj = selectedObj;
@@ -863,7 +875,7 @@
 				if (!obj) { log('[deleteSelected] nothing selected'); return; }
 				var lid = obj.layerId;
 				log('[deleteSelected] removing ' + obj.type + ' id=' + obj.id + ' from layer=' + lid);
-				if (layers[lid]) {
+				if (layers[lid] && layers[lid].group) {
 					layers[lid].group.removeLayer(obj.leafletObj);
 					layers[lid].objects = layers[lid].objects.filter(function (o) { return o !== obj; });
 					log('[deleteSelected] layer objects remaining: ' + layers[lid].objects.length);
@@ -1013,7 +1025,10 @@
 				var marker = L.marker(ll, { icon: icon, draggable: true });
 				lyr.group.addLayer(marker);
 				var rObj = Object.assign({}, obj, { leafletObj: marker });
-				marker.on('dragstart', function () { if (marker._icon) marker._icon.style.cursor = 'grabbing'; });
+				marker.on('dragstart', function () {
+					if (marker._icon) marker._icon.style.cursor = 'grabbing';
+					selectObject(rObj);  // ← rObj (не obj!) — это правильная ссылка в restoreObject
+				});
 				marker.on('dragend', function (ev) {
 					var ll2 = ev.target.getLatLng(); rObj.latlng = [ll2.lat, ll2.lng];
 					if (marker._icon) marker._icon.style.cursor = '';
