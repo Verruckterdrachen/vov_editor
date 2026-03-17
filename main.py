@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 		QInputDialog, QMessageBox, QSplitter, QTreeWidget, QTreeWidgetItem,
 		QToolButton, QStatusBar, QComboBox, QSpinBox, QCheckBox, QDialog,
 		QDialogButtonBox, QLineEdit, QFormLayout, QGroupBox, QSizePolicy,
-		QAbstractItemView, QStyledItemDelegate
+		QAbstractItemView, QStyledItemDelegate, QSplashScreen
 )
 from PyQt6.QtCore import (
 		Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QSize, QTimer, QRect, QEvent
@@ -224,6 +224,111 @@ class EyeColumnDelegate(QStyledItemDelegate):
 								painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, text)
 				else:
 						super().paint(painter, option, index)
+
+class VovSplashScreen(QSplashScreen):
+		def __init__(self):
+				from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont, QPen, QLinearGradient
+				from PyQt6.QtCore import Qt, QRect, QPoint
+				W, H = 620, 380
+				px = QPixmap(W, H)
+				px.fill(QColor("#1a1a2e"))
+
+				p = QPainter(px)
+				p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+				# ── Фон: картографическая сетка ──
+				grid_pen = QPen(QColor("#1e2240"), 1)
+				p.setPen(grid_pen)
+				STEP = 38
+				for x in range(0, W, STEP):
+						p.drawLine(x, 0, x, H)
+				for y in range(0, H, STEP):
+						p.drawLine(0, y, W, y)
+
+				# ── Крупный полупрозрачный watermark "1941–1945" ──
+				wm_font = QFont("Segoe UI", 72, QFont.Weight.Bold)
+				p.setFont(wm_font)
+				p.setPen(QColor(255, 255, 255, 18))
+				p.drawText(QRect(0, 60, W, 200), Qt.AlignmentFlag.AlignCenter, "1941–1945")
+
+				# ── Декоративная "линия фронта" ──
+				front_pen = QPen(QColor("#8B0000"), 3)
+				front_pen.setStyle(Qt.PenStyle.DashLine)
+				p.setPen(front_pen)
+				pts = [
+						QPoint(40, 220), QPoint(90, 195), QPoint(150, 215),
+						QPoint(210, 180), QPoint(270, 200), QPoint(330, 170),
+						QPoint(390, 190), QPoint(450, 160), QPoint(510, 185),
+						QPoint(580, 165)
+				]
+				for i in range(len(pts) - 1):
+						p.drawLine(pts[i], pts[i+1])
+				# Маленькие "крестики" на линии фронта
+				cross_pen = QPen(QColor("#cc0000"), 2)
+				p.setPen(cross_pen)
+				for pt in pts[::2]:
+						p.drawLine(pt.x()-5, pt.y(), pt.x()+5, pt.y())
+						p.drawLine(pt.x(), pt.y()-5, pt.x(), pt.y()+5)
+
+				# ── Верхняя красная полоска ──
+				p.fillRect(QRect(0, 0, W, 4), QColor("#8B0000"))
+
+				# ── Нижняя тёмная полоска ──
+				p.fillRect(QRect(0, H-44, W, 44), QColor("#12122a"))
+
+				# ── Иконка карты ──
+				icon_font = QFont("Segoe UI Emoji", 42)
+				p.setFont(icon_font)
+				p.setPen(QColor("#c0c0c0"))
+				p.drawText(QRect(0, 28, W, 80), Qt.AlignmentFlag.AlignCenter, "🗺")
+
+				# ── Заголовок ──
+				title_font = QFont("Segoe UI", 22, QFont.Weight.Bold)
+				p.setFont(title_font)
+				p.setPen(QColor("#e8e8e8"))
+				p.drawText(QRect(0, 105, W, 44), Qt.AlignmentFlag.AlignCenter, "Редактор карт ВОВ")
+
+				# ── Подзаголовок ──
+				sub_font = QFont("Segoe UI", 12)
+				p.setFont(sub_font)
+				p.setPen(QColor("#7a8a9a"))
+				p.drawText(QRect(0, 150, W, 30), Qt.AlignmentFlag.AlignCenter,
+									 "Великая Отечественная война  •  1941–1945")
+
+				# ── Разделитель ──
+				sep_pen = QPen(QColor("#8B0000"), 1)
+				p.setPen(sep_pen)
+				p.drawLine(60, 190, W - 60, 190)
+
+				# ── Статус-строка снизу ──
+				status_font = QFont("Segoe UI", 10)
+				p.setFont(status_font)
+				p.setPen(QColor("#5a6a7a"))
+				p.drawText(QRect(0, H-36, W-14, 30),
+									 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+									 "v1.0")
+
+				p.end()
+				super().__init__(px)
+				self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+				self._status_font = QFont("Segoe UI", 10)
+
+		def set_status(self, msg: str):
+				from PyQt6.QtGui import QPainter, QColor, QFont
+				from PyQt6.QtCore import QRect, Qt
+				# Перерисовываем только нижнюю строку статуса
+				px = self.pixmap().copy()
+				p = QPainter(px)
+				W, H = px.width(), px.height()
+				p.fillRect(QRect(0, H-44, W, 44), QColor("#12122a"))
+				p.setFont(self._status_font)
+				p.setPen(QColor("#4a9aba"))
+				p.drawText(QRect(16, H-36, W//2, 30),
+									 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+									 "⚙  " + msg)
+				p.end()
+				self.setPixmap(px)
+				self.repaint()
 
 # ── Главное окно ─────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
@@ -886,6 +991,11 @@ class MainWindow(QMainWindow):
 						layer_item.setExpanded(True)
 
 		def on_js_status(self, msg: str):
+				if msg == "__MAP_READY__":
+						if hasattr(self, '_splash') and self._splash:
+								self._splash.finish(self)
+								self._splash = None
+						return
 				if msg == "__SAVE_DIALOG__":
 						self._save_project()
 						return
@@ -958,7 +1068,20 @@ if __name__ == "__main__":
 		app = QApplication(sys.argv)
 		app.setStyle("Fusion")
 		os.makedirs("projects", exist_ok=True)
+		splash = VovSplashScreen()
+		splash.show()
+		splash.set_status("Инициализация...")
+		app.processEvents()
+
 		win = MainWindow()
+		win._splash = splash
+
+		# Подстраховка: закрыть через 6 сек если __MAP_READY__ не пришёл
+		QTimer.singleShot(6000, lambda: (
+				splash.finish(win) or setattr(win, '_splash', None)
+				if win._splash else None
+		))
+
 		win.showMaximized()
 		win.raise_()
 		win.activateWindow()

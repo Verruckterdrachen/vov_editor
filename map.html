@@ -339,9 +339,10 @@
 				bridge = channel.objects.bridge;
 				log('[Bridge] QWebChannel initialized, bridge object received');
 				bridge.onStatus('Карта готова');
-				// Отправляем актуальное состояние слоёв сразу после готовности моста
 				log('[Bridge] Sending initial layers state to Qt...');
 				sendLayersToQt();
+				bridge.onStatus('__MAP_READY__');
+				log('[Bridge] MAP_READY sent');
 			});
 		}
 
