@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 		QAbstractItemView, QStyledItemDelegate
 )
 from PyQt6.QtCore import (
-		Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QSize, QTimer, QRect
+		Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QSize, QTimer, QRect, QEvent
 )
 from PyQt6.QtGui import QIcon, QColor, QKeySequence, QShortcut, QFont
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -365,6 +365,7 @@ class MainWindow(QMainWindow):
 				self.webview.page().setWebChannel(self.channel)
 				self.webview.load(QUrl.fromLocalFile(MAP_HTML))
 				self.webview.loadFinished.connect(self._on_map_loaded)
+				self.webview.installEventFilter(self)
 				return self.webview
 
 		def _build_tools_panel(self):
@@ -815,6 +816,16 @@ class MainWindow(QMainWindow):
 
 		def _js(self, code: str):
 				self.webview.page().runJavaScript(code)
+
+		def eventFilter(self, obj, event):
+			if obj is self.webview:
+					if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Space:
+							self._js("startSpacePan();")
+							return True
+					if event.type() == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Space:
+							self._js("stopSpacePan();")
+							return True
+			return super().eventFilter(obj, event)
 
 		def receive_layers(self, layers_json: str):
 				try:

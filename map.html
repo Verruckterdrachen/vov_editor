@@ -237,6 +237,7 @@
 		var activeTool = 'select';
 		var activeLayerId = null;
 		var currentProjectPath = '';
+		var spaceDown = false;
 
 		var brushColor = '#ff0000';
 		var brushSize = 4;
@@ -1122,6 +1123,24 @@
 		}
 
 		function notifyStatus(msg) { if (bridge) bridge.onStatus(msg); }
+
+		function startSpacePan() {
+			if (spaceDown) return;
+			spaceDown = true;
+			map.dragging.enable();
+			map.getContainer().style.cursor = 'grab';
+		}
+
+		function stopSpacePan() {
+			spaceDown = false;
+			// восстанавливаем dragging согласно текущему инструменту
+			var toolsWithDragging = ['select'];
+			if (toolsWithDragging.indexOf(activeTool) === -1) {
+				map.dragging.disable();
+			}
+			map.getContainer().style.cursor = '';
+			setTool({ tool: activeTool }); // восстанавливаем курсор инструмента
+		}
 
 		document.addEventListener('mouseleave', function () { eraserCursorEl.style.display = 'none'; });
 	</script>
