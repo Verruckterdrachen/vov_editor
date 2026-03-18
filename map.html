@@ -958,8 +958,10 @@
 								if (layers[cid] && layers[cid].parentId === lid) {
 									grpNode.children.push({
 										id: cid, name: layers[cid].name, visible: layers[cid].visible,
+										localOpacity: layers[cid].localOpacity !== undefined ? layers[cid].localOpacity : 100,
 										objects: (layers[cid].objects || []).map(serializeObject)
 									});
+
 									addedIds[cid] = true;
 								}
 							});
@@ -981,7 +983,7 @@
 
 		function serializeObject(obj) {
 			var s = { id: obj.id, type: obj.type, layerId: obj.layerId, visible: obj.visible !== false };
-			if (obj.type === 'polyline') { s.latlngs = obj.latlngs; s.color = obj.color; s.weight = obj.weight; }
+			if (obj.type === 'polyline') { s.latlngs = obj.latlngs; s.color = obj.color; s.weight = obj.weight; s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100; }
 			else if (obj.type === 'text') { s.text = obj.text; s.latlng = obj.latlng; s.fontSize = obj.fontSize; s.fontColor = obj.fontColor; s.fontBold = obj.fontBold; s.fontItalic = obj.fontItalic; }
 			else if (obj.type === 'image') { s.url = obj.url; s.bounds = obj.bounds; s.opacity = obj.opacity; s.latlng = obj.latlng; }
 			return s;
@@ -1005,13 +1007,13 @@
 						var lg = L.layerGroup();
 						var childVisible = child.visible !== false && lyr.visible !== false;
 						if (childVisible) lg.addTo(map);
-						layers[child.id] = { name: child.name, visible: child.visible !== false, group: lg, objects: [], parentId: lyr.id };
+						layers[child.id] = { name: child.name, visible: child.visible !== false, group: lg, objects: [], parentId: lyr.id, localOpacity: child.localOpacity !== undefined ? child.localOpacity : 100 };
 						layerOrder.push(child.id);
 						(child.objects || []).forEach(function (obj) { restoreObject(obj, child.id); });
 					});
 				} else {
 					var lg = L.layerGroup(); if (lyr.visible !== false) lg.addTo(map);
-					layers[lyr.id] = { name: lyr.name, visible: lyr.visible !== false, group: lg, objects: [] };
+					layers[lyr.id] = { name: lyr.name, visible: lyr.visible !== false, group: lg, objects: [], localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100 };
 					layerOrder.push(lyr.id);
 					(lyr.objects || []).forEach(function (obj) { restoreObject(obj, lyr.id); });
 				}
@@ -1028,7 +1030,7 @@
 			if (obj.type === 'polyline') {
 				var pl = L.polyline(obj.latlngs, { color: obj.color, weight: obj.weight, opacity: 0.95, lineCap: 'round', lineJoin: 'round', smoothFactor: 1.5 });
 				lyr.group.addLayer(pl);
-				var r = Object.assign({}, obj, { leafletObj: pl });
+				var r = Object.assign({}, obj, { leafletObj: pl, localOpacity: obj.localOpacity !== undefined ? obj.localOpacity : 100 });
 				makeObjectInteractive(pl, layerId);
 				lyr.objects.push(r);
 			} else if (obj.type === 'text') {
@@ -1077,7 +1079,7 @@
 				if (addedIds[lid]) return;
 				var lyr = layers[lid];
 				if (lyr.isGroup) {
-					currentGroup = { id: lid, name: lyr.name, isGroup: true, visible: lyr.visible, children: [] };
+					currentGroup = { id: lid, name: lyr.name, isGroup: true, visible: lyr.visible, localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100, children: [] };
 					result.push(currentGroup);
 					addedIds[lid] = true;
 				} else {
@@ -1085,10 +1087,11 @@
 						return {
 							id: o.id, type: o.type,
 							label: o.type === 'text' ? o.text : (o.type === 'image' ? 'Изображение' : 'Линия'),
-							visible: o.visible !== false
+							visible: o.visible !== false,
+							localOpacity: o.localOpacity !== undefined ? o.localOpacity : 100
 						};
 					});
-					var node = { id: lid, name: lyr.name, isGroup: false, visible: lyr.visible, objects: objects };
+					var node = { id: lid, name: lyr.name, isGroup: false, visible: lyr.visible, localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100, objects: objects };
 					if (lyr.parentId) {
 						if (currentGroup) currentGroup.children.push(node);
 						else result.push(node);
@@ -1132,6 +1135,74 @@
 				});
 			});
 		}
+
+		function _getParentEffective(layerId) {
+			var lyr = layers[layerId];
+			if (!lyr || !lyr.parentId) return 100;
+			var parent = layers[lyr.parentId];
+			if (!parent) return 100;
+			return (parent.localOpacity !== undefined ? parent.localOpacity : 100)
+				* _getParentEffective(lyr.parentId) / 100;
+		}
+
+		function _applyEffectiveToLayer(layerId, inheritedOpacity) {
+			var lyr = layers[layerId];
+			if (!lyr || !lyr.objects) return;
+			lyr.objects.forEach(function (o) {
+				var objLocal = o.localOpacity !== undefined ? o.localOpacity : 100;
+				var effective = objLocal * inheritedOpacity / 100;
+				_applyOpacityToLeaflet(o, effective);
+			});
+		}
+
+		function _applyOpacityToLeaflet(o, effectivePercent) {
+			if (!o.leafletObj) return;
+			var v = effectivePercent / 100;
+			if (o.leafletObj.setStyle) {
+				o.leafletObj.setStyle({ opacity: v, fillOpacity: v * 0.3 });
+			} else if (o.leafletObj.setOpacity) {
+				o.leafletObj.setOpacity(v);
+			}
+		}
+
+		function setLayerOpacity(id, value) {
+			if (!layers[id]) return;
+			layers[id].localOpacity = value;
+			var inherited = _getParentEffective(id);
+			var effective = value * inherited / 100;
+			_applyEffectiveToLayer(id, effective);
+			log('Layer opacity: ' + id + ' -> local=' + value + '% effective=' + effective.toFixed(1) + '%');
+		}
+
+		function setObjectOpacity(objId, value) {
+			Object.keys(layers).forEach(function (lid) {
+				layers[lid].objects.forEach(function (o) {
+					if (o.id !== objId) return;
+					o.localOpacity = value;
+					var layerLocal = layers[lid].localOpacity !== undefined ? layers[lid].localOpacity : 100;
+					var inherited = layerLocal * _getParentEffective(lid) / 100;
+					var effective = value * inherited / 100;
+					_applyOpacityToLeaflet(o, effective);
+					log('Object opacity: ' + objId + ' -> local=' + value + '% effective=' + effective.toFixed(1) + '%');
+				});
+			});
+		}
+
+		function setGroupOpacity(groupId, value) {
+			if (!layers[groupId]) return;
+			layers[groupId].localOpacity = value;
+			var inherited = _getParentEffective(groupId);
+			var effective = value * inherited / 100;
+			Object.keys(layers).forEach(function (lid) {
+				if (layers[lid].parentId === groupId) {
+					layers[lid].localOpacity = layers[lid].localOpacity !== undefined ? layers[lid].localOpacity : 100;
+					var childEffective = layers[lid].localOpacity * effective / 100;
+					_applyEffectiveToLayer(lid, childEffective);
+				}
+			});
+			log('Group opacity: ' + groupId + ' -> local=' + value + '% effective=' + effective.toFixed(1) + '%');
+		}
+
 
 		function notifyStatus(msg) { if (bridge) bridge.onStatus(msg); }
 

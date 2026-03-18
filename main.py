@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 		QInputDialog, QMessageBox, QSplitter, QTreeWidget, QTreeWidgetItem,
 		QToolButton, QStatusBar, QComboBox, QSpinBox, QCheckBox, QDialog,
 		QDialogButtonBox, QLineEdit, QFormLayout, QGroupBox, QSizePolicy,
-		QAbstractItemView, QStyledItemDelegate, QSplashScreen
+		QAbstractItemView, QStyledItemDelegate, QSplashScreen, QStyle
 )
 from PyQt6.QtCore import (
 		Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QSize, QTimer, QRect, QEvent
@@ -163,8 +163,9 @@ class LayerItem(QTreeWidgetItem):
 				super().__init__()
 				self.layer_id    = layer_id
 				self.is_group    = is_group
-				self.object_type = object_type  # "text", "polyline", "image" — для объектов внутри слоя
+				self.object_type = object_type
 				self.visible     = True
+				self.opacity     = 100
 				self.setText(0, name)
 				self._update_icon()
 
@@ -347,6 +348,20 @@ class VovLoadingOverlay(QWidget):
 									 "v1.0")
 				p.end()
 
+class OpacitySlider(QSlider):
+		def __init__(self, parent=None):
+				super().__init__(Qt.Orientation.Horizontal, parent)
+
+		def mousePressEvent(self, event):
+				if event.button() == Qt.MouseButton.LeftButton:
+						val = QStyle.sliderValueFromPosition(
+								self.minimum(), self.maximum(),
+								event.position().toPoint().x(),
+								self.width()
+						)
+						self.setValue(val)
+				super().mousePressEvent(event)
+
 # ── Главное окно ─────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
 		def __init__(self):
@@ -441,6 +456,19 @@ class MainWindow(QMainWindow):
 				lbl = QLabel("СЛОИ")
 				lbl.setStyleSheet("color:#aaa;font-size:11px;font-weight:bold;")
 				lay.addWidget(lbl)
+
+				opacity_row = QHBoxLayout()
+				opacity_row.addWidget(QLabel("Непрозрачность:"))
+				self.opacity_slider = OpacitySlider()
+				self.opacity_slider.setRange(0, 100)
+				self.opacity_slider.setValue(100)
+				self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+				opacity_row.addWidget(self.opacity_slider)
+				self.opacity_lbl = QLabel("100%")
+				self.opacity_lbl.setFixedWidth(36)
+				opacity_row.addWidget(self.opacity_lbl)
+				lay.addLayout(opacity_row)
+
 				btn_row = QHBoxLayout()
 				for txt, tip, slot in [
 						("📁", "Добавить группу",  self._add_group),
@@ -679,10 +707,8 @@ class MainWindow(QMainWindow):
 				if not isinstance(item, LayerItem): return
 				if col == 1:
 						item.toggle_visibility()
-						bg = item.background(1).color()
 						vis = item.visible
 						if item.object_type:
-								# Скрытие отдельного объекта
 								self._js(f'setObjectVisible("{item.layer_id}", {str(vis).lower()});')
 								self._js_log(f"Object visibility: '{item.text(0)}' -> {vis}")
 						else:
@@ -698,6 +724,8 @@ class MainWindow(QMainWindow):
 								self._clear_highlight(self.layer_tree.invisibleRootItem())
 								item.setBackground(0, QColor("#1a5276"))
 								item.setBackground(1, QColor("#1a5276"))
+						self._sync_opacity_slider(item)
+
 
 		def _set_children_visibility(self, parent_item: LayerItem, visible: bool):
 				"""Рекурсивно применяет видимость ко всем дочерним LayerItem (слоям, не объектам)."""
@@ -737,6 +765,7 @@ class MainWindow(QMainWindow):
 				self._js(f'setActiveLayer("{item.layer_id}");')
 				self.status_lbl.setText(f"Активный слой: {item.text(0)}")
 				self._js_log(f"Active layer: '{item.text(0)}' id={item.layer_id}")
+				self._sync_opacity_slider(item)
 
 		def _clear_highlight(self, item):
 				item.setBackground(0, QColor("transparent"))
@@ -772,6 +801,30 @@ class MainWindow(QMainWindow):
 												order.append(child.layer_id)
 				self._js(f'reorderLayers({json.dumps(order)});')
 				self._js_log(f"Layer order changed: {order}")
+
+		def _on_opacity_changed(self, value: int):
+				self.opacity_lbl.setText(f"{value}%")
+				item = self.layer_tree.currentItem()
+				if not isinstance(item, LayerItem):
+						return
+				if item.object_type:
+						self._js(f"setObjectOpacity(\"{item.layer_id}\", {value});")
+						self._js_log(f"Opacity: object={item.layer_id} -> {value}%")
+				elif item.is_group:
+						self._js(f"setGroupOpacity(\"{item.layer_id}\", {value});")
+						self._js_log(f"Opacity: group={item.layer_id} -> {value}%")
+				else:
+						self._js(f"setLayerOpacity(\"{item.layer_id}\", {value});")
+						self._js_log(f"Opacity: layer={item.layer_id} -> {value}%")
+
+		def _sync_opacity_slider(self, item):
+				if not isinstance(item, LayerItem):
+						return
+				opacity = getattr(item, 'opacity', 100)
+				self.opacity_slider.blockSignals(True)
+				self.opacity_slider.setValue(opacity)
+				self.opacity_lbl.setText(f"{opacity}%")
+				self.opacity_slider.blockSignals(False)
 
 		def _pick_brush_color(self):
 				c = QColorDialog.getColor(QColor(self._brush_color), self, "Цвет кисти")
@@ -960,11 +1013,13 @@ class MainWindow(QMainWindow):
 								if node.get("isGroup"):
 										g_item = LayerItem(node["id"], "📁 " + node["name"], is_group=True)
 										g_item.visible = node.get("visible", True)
+										g_item.opacity = node.get("localOpacity", 100)
 										g_item._update_icon()
 										self.layer_tree.addTopLevelItem(g_item)
 										for lyr in node.get("children", []):
 												l_item = LayerItem(lyr["id"], lyr["name"])
 												l_item.visible = lyr.get("visible", True)
+												l_item.opacity = lyr.get("localOpacity", 100)
 												l_item._update_icon()
 												g_item.addChild(l_item)
 												self._add_object_items(l_item, lyr.get("objects", []))
@@ -989,6 +1044,9 @@ class MainWindow(QMainWindow):
 								f"receive_layers OK: {len(layers)} top-level nodes, "
 								f"{total_objects} total objects"
 						)
+						current = self.layer_tree.currentItem()
+						if current:
+								self._sync_opacity_slider(current)
 				except Exception as e:
 						self.status_lbl.setText(f"Ошибка загрузки слоёв: {e}")
 						self._js_log(f"ERROR receive_layers: {e}")
@@ -1001,7 +1059,8 @@ class MainWindow(QMainWindow):
 						icon_char = TYPE_ICONS.get(obj_type, "•")
 						o_item = LayerItem(obj["id"], f"{icon_char}  {label}", object_type=obj_type)
 						o_item.visible = obj.get("visible", True)
-						o_item._update_icon()  # покажет 👁 в колонку 1
+						o_item.opacity = obj.get("localOpacity", 100)
+						o_item._update_icon()
 						o_item.setFlags(o_item.flags() | Qt.ItemFlag.ItemIsSelectable)
 						layer_item.addChild(o_item)
 				if objects:
@@ -1050,7 +1109,11 @@ class MainWindow(QMainWindow):
 				if msg.startswith("__SELECTED__:"):
 						self._selected_obj_id = msg[len("__SELECTED__:"):] or None
 						self._highlight_tree_item(self._selected_obj_id)
+						current = self.layer_tree.currentItem()
+						if current:
+								self._sync_opacity_slider(current)
 						return
+
 				self.status_lbl.setText(msg)
 
 
