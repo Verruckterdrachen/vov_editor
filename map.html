@@ -341,9 +341,19 @@
 				bridge.onStatus('Карта готова');
 				log('[Bridge] Sending initial layers state to Qt...');
 				sendLayersToQt();
-				bridge.onStatus('__MAP_READY__');
-				log('[Bridge] MAP_READY sent');
+
+				var tileReadySent = false;
+				function sendMapReady() {
+					if (tileReadySent) return;
+					tileReadySent = true;
+					log('[Bridge] MAP_READY sent (tiles loaded)');
+					bridge.onStatus('__MAP_READY__');
+				}
+				tileLayer.on('load', sendMapReady);
+				// Страховка если тайлы не загрузились за 12 сек
+				setTimeout(sendMapReady, 12000);
 			});
+
 		}
 
 		// ═══════════════════════════════════════════════════════════
