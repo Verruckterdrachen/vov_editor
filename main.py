@@ -756,16 +756,18 @@ class MainWindow(QMainWindow):
 						self._js(f'renameLayer("{item.layer_id}", {json.dumps(name)});')
 						self._js_log(f"Layer renamed: '{old_name}' -> '{name}'")
 
-		def _activate_layer(self, item: LayerItem):
+		def _activate_layer(self, item: LayerItem, silent: bool = False):
 				self._active_layer_id = item.layer_id
-				for i in range(self.layer_tree.topLevelItemCount()):
-						self._clear_highlight(self.layer_tree.topLevelItem(i))
-				item.setBackground(0, QColor("#1a5276"))
-				item.setBackground(1, QColor("#1a5276"))
-				self._js(f'setActiveLayer("{item.layer_id}");')
-				self.status_lbl.setText(f"Активный слой: {item.text(0)}")
-				self._js_log(f"Active layer: '{item.text(0)}' id={item.layer_id}")
-				self._sync_opacity_slider(item)
+				if not silent:
+						for i in range(self.layer_tree.topLevelItemCount()):
+								self._clear_highlight(self.layer_tree.topLevelItem(i))
+						item.setBackground(0, QColor("#1a5276"))
+						item.setBackground(1, QColor("#1a5276"))
+						self._js(f'setActiveLayer("{item.layer_id}");')
+						self.status_lbl.setText(f"Активный слой: {item.text(0)}")
+						self._js_log(f"Active layer: '{item.text(0)}' id={item.layer_id}")
+						self._sync_opacity_slider(item)
+
 
 		def _clear_highlight(self, item):
 				item.setBackground(0, QColor("transparent"))
@@ -1025,7 +1027,7 @@ class MainWindow(QMainWindow):
 												g_item.addChild(l_item)
 												self._add_object_items(l_item, lyr.get("objects", []))
 												if lyr["id"] == active_id:
-														self._activate_layer(l_item)
+														self._activate_layer(l_item, silent=True)
 										g_item.setExpanded(True)
 								else:
 										l_item = LayerItem(node["id"], node["name"])
@@ -1035,7 +1037,7 @@ class MainWindow(QMainWindow):
 										self.layer_tree.addTopLevelItem(l_item)
 										self._add_object_items(l_item, node.get("objects", []))
 										if node["id"] == active_id:
-												self._activate_layer(l_item)
+												self._activate_layer(l_item, silent=True)
 
 						total_objects = sum(
 								sum(len(lyr.get("objects", [])) for lyr in node.get("children", []))
@@ -1046,6 +1048,19 @@ class MainWindow(QMainWindow):
 								f"receive_layers OK: {len(layers)} top-level nodes, "
 								f"{total_objects} total objects"
 						)
+						# Восстанавливаем highlight активного слоя после полной сборки дерева
+						if active_id:
+								def find_and_highlight(item):
+										if isinstance(item, LayerItem) and item.layer_id == active_id and not item.object_type:
+												item.setBackground(0, QColor("#1a5276"))
+												item.setBackground(1, QColor("#1a5276"))
+												self._sync_opacity_slider(item)
+												return True
+										for i in range(item.childCount()):
+												if find_and_highlight(item.child(i)):
+														return True
+										return False
+								find_and_highlight(self.layer_tree.invisibleRootItem())
 						current = self.layer_tree.currentItem()
 						if current:
 								self._sync_opacity_slider(current)

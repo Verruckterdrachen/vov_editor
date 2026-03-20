@@ -7,16 +7,6 @@
 
 ## 🔴 Открытые баги / задачи
 
-### BUG-11 — `dataChanged()` invalid index в логе Qt
-**Статус**: ❌ Не исправлен  
-**Описание**: В терминале VSCode появляются warnings:
-`dataChanged() called with an invalid index range: topleft: QModelIndex(-1,-1,...)`  
-**Root cause**: `setBackground()` или `item.opacity = value` вызывается на LayerItem,
-который уже удалён из дерева после `layer_tree.clear()` в `receive_layers`.  
-**Механизм фикса**: Проверять `item.treeWidget() is not None` перед любым обращением к фону/данным item.
-
----
-
 ### BUG-12 — Курсор-круг при рисовании кистью
 **Статус**: ❌ Не исправлен  
 **Описание**: В режиме кисти курсор `crosshair`. Нужен круг с прозрачным фоном
@@ -90,6 +80,7 @@ action: 'editText', obj, oldText, oldFontSize, oldFontColor, oldFontBold, oldFon
 
 | ID | Описание | Коммит |
 |---|---|---|
+| BUG-11 | `dataChanged` invalid index — highlight откладывается после полной сборки дерева | fix(BUG-11) |
 | TASK-9 | Ползунок opacity сбрасывался при смене объекта (item.opacity не обновлялся) | fix: sync item.opacity on slider change |
 | TASK-7 | Сплэш-экран при запуске (VovLoadingOverlay с анимацией, закрытие по __MAP_READY__) | уже в коде |
 | BUG-9 | Space pan через Python eventFilter (QEvent + installEventFilter + JS-функции) | fix(BUG-9) |
