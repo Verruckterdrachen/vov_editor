@@ -984,8 +984,8 @@
 		function serializeObject(obj) {
 			var s = { id: obj.id, type: obj.type, layerId: obj.layerId, visible: obj.visible !== false };
 			if (obj.type === 'polyline') { s.latlngs = obj.latlngs; s.color = obj.color; s.weight = obj.weight; s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100; }
-			else if (obj.type === 'text') { s.text = obj.text; s.latlng = obj.latlng; s.fontSize = obj.fontSize; s.fontColor = obj.fontColor; s.fontBold = obj.fontBold; s.fontItalic = obj.fontItalic; }
-			else if (obj.type === 'image') { s.url = obj.url; s.bounds = obj.bounds; s.opacity = obj.opacity; s.latlng = obj.latlng; }
+			else if (obj.type === 'text') { s.text = obj.text; s.latlng = obj.latlng; s.fontSize = obj.fontSize; s.fontColor = obj.fontColor; s.fontBold = obj.fontBold; s.fontItalic = obj.fontItalic; s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100; }
+			else if (obj.type === 'image') { s.url = obj.url; s.bounds = obj.bounds; s.opacity = obj.opacity; s.latlng = obj.latlng; s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100; }
 			return s;
 		}
 
@@ -1016,6 +1016,14 @@
 					layers[lyr.id] = { name: lyr.name, visible: lyr.visible !== false, group: lg, objects: [], localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100 };
 					layerOrder.push(lyr.id);
 					(lyr.objects || []).forEach(function (obj) { restoreObject(obj, lyr.id); });
+				}
+			});
+			// Применяем opacity всех слоёв после загрузки
+			Object.keys(layers).forEach(function (lid) {
+				if (!layers[lid].isGroup) {
+					var inherited = _getParentEffective(lid);
+					var layerLocal = layers[lid].localOpacity !== undefined ? layers[lid].localOpacity : 100;
+					_applyEffectiveToLayer(lid, layerLocal * inherited / 100);
 				}
 			});
 			if (data.activeLayerId && layers[data.activeLayerId]) setActiveLayer(data.activeLayerId);

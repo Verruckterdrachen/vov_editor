@@ -807,6 +807,7 @@ class MainWindow(QMainWindow):
 				item = self.layer_tree.currentItem()
 				if not isinstance(item, LayerItem):
 						return
+				item.opacity = value
 				if item.object_type:
 						self._js(f"setObjectOpacity(\"{item.layer_id}\", {value});")
 						self._js_log(f"Opacity: object={item.layer_id} -> {value}%")
@@ -1029,6 +1030,7 @@ class MainWindow(QMainWindow):
 								else:
 										l_item = LayerItem(node["id"], node["name"])
 										l_item.visible = node.get("visible", True)
+										l_item.opacity = node.get("localOpacity", 100)   # ← добавить!
 										l_item._update_icon()
 										self.layer_tree.addTopLevelItem(l_item)
 										self._add_object_items(l_item, node.get("objects", []))
