@@ -895,13 +895,17 @@ class MainWindow(QMainWindow):
 				self._js_log(f"Tile layer: {names[idx]}")
 
 		def _import_image(self):
+				from PyQt6.QtGui import QImage
 				path, _ = QFileDialog.getOpenFileName(
 						self, "Выбрать изображение", "", "Images (*.png *.jpg *.jpeg *.bmp)"
 				)
 				if not path: return
+				img = QImage(path)
+				w, h = img.width(), img.height()
+				if w <= 0 or h <= 0: w, h = 800, 600
 				path_js = path.replace("\\", "/")
-				self._js(f'importImage("file:///{path_js}");')
-				self._js_log(f"Image imported: {os.path.basename(path)}")
+				self._js(f'importImage("file:///{path_js}", {w}, {h});')
+				self._js_log(f"Image imported: {os.path.basename(path)} ({w}x{h})")
 
 		def _load_project_from_path(self, path: str):
 				try:

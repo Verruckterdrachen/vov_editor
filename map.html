@@ -171,6 +171,48 @@
 		body.space-pan.panning #map {
 			cursor: grabbing !important;
 		}
+
+		/* ── IMAGE MARKER ── */
+		.image-marker-wrap {
+			position: relative;
+			display: inline-block;
+			cursor: grab;
+			user-select: none;
+			-webkit-user-select: none;
+		}
+
+		.image-marker-wrap:active {
+			cursor: grabbing;
+		}
+
+		.image-marker-wrap img {
+			display: block;
+			pointer-events: none;
+		}
+
+		.image-resize-handle {
+			position: absolute;
+			bottom: -6px;
+			right: -6px;
+			width: 16px;
+			height: 16px;
+			background: #fff;
+			border: 2px solid #2e86c1;
+			border-radius: 3px;
+			cursor: nwse-resize;
+			z-index: 9999;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			font-size: 9px;
+			color: #2e86c1;
+			line-height: 1;
+			pointer-events: auto;
+		}
+
+		.image-selected .image-marker-wrap img {
+			outline: 2px solid #00aaff;
+		}
 	</style>
 </head>
 
@@ -862,26 +904,171 @@
 		// ═══════════════════════════════════════════════════════════
 		//   ИМПОРТ ИЗОБРАЖЕНИЙ
 		// ═══════════════════════════════════════════════════════════
-		function importImage(fileUrl) {
-			var center = map.getCenter();
-			var bounds = map.getBounds();
-			var latRange = (bounds.getNorth() - bounds.getSouth()) * 0.3;
-			var lngRange = (bounds.getEast() - bounds.getWest()) * 0.3;
-			var imgBounds = [[center.lat - latRange, center.lng - lngRange], [center.lat + latRange, center.lng + lngRange]];
-			var overlay = L.imageOverlay(fileUrl, imgBounds, { opacity: 0.8, interactive: true });
-			layers[activeLayerId].group.addLayer(overlay);
+
+		// Вычислить iconSize с учётом пропорций и коррекции Меркатора
+		function calcImageIconSize(naturalW, naturalH, scalePx) {
+			// scalePx — желаемая ширина в экранных пикселях
+			var w = scalePx;
+			var h = scalePx * (naturalH / naturalW);
+			return [Math.round(w), Math.round(h)];
+		}
+
+		function createImageMarker(fileUrl, naturalW, naturalH, latlng, scale, layerId) {
+			var size = calcImageIconSize(naturalW, naturalH, scale);
+			var icon = _buildImageIcon(fileUrl, size[0], size[1]);
+			var marker = L.marker(latlng, {
+				icon: icon,
+				draggable: true,
+				interactive: true
+			});
+
 			var obj = {
 				id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-				type: 'image', url: fileUrl, latlng: [center.lat, center.lng],
-				bounds: imgBounds, opacity: 0.8, layerId: activeLayerId, leafletObj: overlay
+				type: 'image',
+				url: fileUrl,
+				naturalW: naturalW,
+				naturalH: naturalH,
+				latlng: [latlng.lat, latlng.lng],
+				scale: scale,
+				opacity: 0.9,
+				layerId: layerId,
+				leafletObj: marker
 			};
-			overlay.on('click', function (ev) { L.DomEvent.stopPropagation(ev); selectObject(obj); });
+
+			_attachImageEvents(marker, obj, layerId);
+			return obj;
+		}
+
+		function _buildImageIcon(url, w, h) {
+			return L.divIcon({
+				className: '',
+				html: '<div class="image-marker-wrap" style="width:' + w + 'px;height:' + h + 'px;">' +
+					'<img src="' + url + '" style="width:' + w + 'px;height:' + h + 'px;" />' +
+					'<div class="image-resize-handle" data-role="resize">↘</div>' +
+					'</div>',
+				iconAnchor: [Math.round(w / 2), Math.round(h / 2)],
+				iconSize: [w, h]
+			});
+		}
+
+		function _attachImageEvents(marker, obj, layerId) {
+			// drag самого изображения
+			marker.on('dragstart', function () {
+				obj._dragStartLatLng = marker.getLatLng();
+				selectObject(obj);
+			});
+			marker.on('dragend', function (ev) {
+				var ll = ev.target.getLatLng();
+				var oldLatLng = obj._dragStartLatLng;
+				obj.latlng = [ll.lat, ll.lng];
+				pushHistory({ action: 'move', obj: obj, oldLatLng: oldLatLng, newLatLng: ll });
+				log('[image] dragged to ' + ll.lat.toFixed(4) + ',' + ll.lng.toFixed(4));
+				// Перепозиционируем handle если он показан
+				if (selectedObj === obj) _showResizeHandle(obj);
+			});
+			marker.on('click', function (ev) {
+				L.DomEvent.stopPropagation(ev);
+				if (activeTool === 'select') selectObject(obj);
+			});
+
+			// Resize handle: mousedown на data-role="resize"
+			marker.on('add', function () {
+				_bindResizeHandle(marker, obj);
+			});
+		}
+
+		// Вешаем обработчик на handle после добавления маркера в DOM
+		function _bindResizeHandle(marker, obj) {
+			// Leaflet добавляет _icon чуть позже — ждём
+			setTimeout(function () {
+				if (!marker._icon) return;
+				var handle = marker._icon.querySelector('[data-role="resize"]');
+				if (!handle) return;
+				handle.addEventListener('mousedown', function (e) {
+					e.preventDefault();
+					e.stopPropagation();
+					_startResize(e, obj);
+				});
+			}, 50);
+		}
+
+		// Активный resize-сеанс
+		var _resizeState = null;
+
+		function _startResize(e, obj) {
+			map.dragging.disable();
+			var startX = e.clientX;
+			var startY = e.clientY;
+			var startScale = obj.scale;
+
+			_resizeState = { obj: obj, startX: startX, startY: startY, startScale: startScale };
+
+			function onMouseMove(ev) {
+				if (!_resizeState) return;
+				// Дельта по диагонали: вправо/вниз = увеличение
+				var dx = ev.clientX - _resizeState.startX;
+				var dy = ev.clientY - _resizeState.startY;
+				var delta = (dx + dy) / 2;
+				var newScale = Math.max(20, Math.min(2000, _resizeState.startScale + delta));
+				_applyImageScale(_resizeState.obj, newScale);
+			}
+
+			function onMouseUp() {
+				if (_resizeState) {
+					var obj2 = _resizeState.obj;
+					pushHistory({
+						action: 'resizeImage',
+						obj: obj2,
+						oldScale: _resizeState.startScale,
+						newScale: obj2.scale
+					});
+					log('[image] resize done, scale=' + obj2.scale.toFixed(1));
+				}
+				_resizeState = null;
+				document.removeEventListener('mousemove', onMouseMove);
+				document.removeEventListener('mouseup', onMouseUp);
+				if (activeTool !== 'select') map.dragging.disable();
+				else map.dragging.enable();
+			}
+
+			document.addEventListener('mousemove', onMouseMove);
+			document.addEventListener('mouseup', onMouseUp);
+		}
+
+		function _applyImageScale(obj, newScale) {
+			obj.scale = newScale;
+			var size = calcImageIconSize(obj.naturalW, obj.naturalH, newScale);
+			var newIcon = _buildImageIcon(obj.url, size[0], size[1]);
+			obj.leafletObj.setIcon(newIcon);
+			// Перепривязываем handle после setIcon (он пересоздаёт DOM)
+			setTimeout(function () {
+				_bindResizeHandle(obj.leafletObj, obj);
+			}, 60);
+		}
+
+		function _showResizeHandle(obj) {
+			// Handle уже встроен в divIcon — ничего дополнительного не нужно
+			// Просто перепривязываем события после selectObject
+			setTimeout(function () {
+				_bindResizeHandle(obj.leafletObj, obj);
+			}, 30);
+		}
+
+		function importImage(fileUrl, naturalW, naturalH) {
+			var center = map.getCenter();
+			// Базовый размер — ~25% ширины вьюпорта в пикселях
+			var baseScale = Math.round(map.getSize().x * 0.25);
+			baseScale = Math.max(80, Math.min(600, baseScale));
+
+			var latlng = L.latLng(center.lat, center.lng);
+			var obj = createImageMarker(fileUrl, naturalW, naturalH, latlng, baseScale, activeLayerId);
+
+			layers[activeLayerId].group.addLayer(obj.leafletObj);
 			layers[activeLayerId].objects.push(obj);
 			pushHistory({ action: 'add', obj: obj });
-			log('Image imported: ' + fileUrl);
-			// FIX #2: синхронизировать панель слоёв после импорта изображения
+			log('[image] imported: ' + fileUrl + ' natural=' + naturalW + 'x' + naturalH + ' scale=' + baseScale);
 			sendLayersToQt();
-			notifyStatus('Изображение импортировано.');
+			notifyStatus('Изображение импортировано');
 		}
 
 		// ═══════════════════════════════════════════════════════════
@@ -901,9 +1088,14 @@
 			selectedObj = obj;
 			if (obj.leafletObj) {
 				if (obj.leafletObj.setStyle) obj.leafletObj.setStyle({ color: '#00aaff', weight: (obj.weight || 4) + 2 });
-				if (obj.leafletObj._icon && obj.type !== 'text') {
+				if (obj.leafletObj._icon && obj.type === 'image') {
+					obj.leafletObj._icon.querySelector('.image-marker-wrap img') &&
+						(obj.leafletObj._icon.querySelector('.image-marker-wrap').classList.add('image-selected'));
+					_showResizeHandle(obj);
+				} else if (obj.leafletObj._icon && obj.type !== 'text') {
 					obj.leafletObj._icon.style.outline = '2px solid #00aaff';
 				}
+
 			}
 			log('Selected: ' + obj.type + ' id=' + obj.id);
 			// Сообщаем Python id выбранного объекта
@@ -914,9 +1106,13 @@
 			if (!selectedObj) return;
 			if (selectedObj.leafletObj) {
 				if (selectedObj.leafletObj.setStyle) selectedObj.leafletObj.setStyle({ color: selectedObj.color || brushColor, weight: selectedObj.weight || brushSize });
-				if (selectedObj.leafletObj._icon && selectedObj.type !== 'text') {
+				if (selectedObj.leafletObj._icon && selectedObj.type === 'image') {
+					var wrap = selectedObj.leafletObj._icon.querySelector('.image-marker-wrap');
+					if (wrap) wrap.classList.remove('image-selected');
+				} else if (selectedObj.leafletObj._icon && selectedObj.type !== 'text') {
 					selectedObj.leafletObj._icon.style.outline = '';
 				}
+
 			}
 			selectedObj = null;
 			if (bridge) bridge.onStatus('__SELECTED__:');  // пустой id = ничего не выбрано
@@ -996,6 +1192,8 @@
 				obj.fontItalic = rec.oldFontItalic;
 				var icon = buildTextIcon(obj.text, obj.fontSize, obj.fontColor, obj.fontBold, obj.fontItalic);
 				obj.leafletObj.setIcon(icon);
+			} else if (rec.action === 'resizeImage') {
+				_applyImageScale(rec.obj, rec.oldScale);
 			} else if (rec.action === 'delete') {
 				var obj = rec.obj;
 				if (layers[obj.layerId] && obj.leafletObj) {
@@ -1055,7 +1253,15 @@
 			var s = { id: obj.id, type: obj.type, layerId: obj.layerId, visible: obj.visible !== false };
 			if (obj.type === 'polyline') { s.latlngs = obj.latlngs; s.color = obj.color; s.weight = obj.weight; s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100; }
 			else if (obj.type === 'text') { s.text = obj.text; s.latlng = obj.latlng; s.fontSize = obj.fontSize; s.fontColor = obj.fontColor; s.fontBold = obj.fontBold; s.fontItalic = obj.fontItalic; s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100; }
-			else if (obj.type === 'image') { s.url = obj.url; s.bounds = obj.bounds; s.opacity = obj.opacity; s.latlng = obj.latlng; s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100; }
+			else if (obj.type === 'image') {
+				s.url = obj.url;
+				s.latlng = obj.latlng;
+				s.naturalW = obj.naturalW || 800;
+				s.naturalH = obj.naturalH || 600;
+				s.scale = obj.scale || 200;
+				s.opacity = obj.opacity || 0.9;
+				s.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100;
+			}
 			return s;
 		}
 
@@ -1136,12 +1342,19 @@
 				});
 				lyr.objects.push(rObj);
 			} else if (obj.type === 'image') {
-				var overlay = L.imageOverlay(obj.url, obj.bounds, { opacity: obj.opacity || 0.8, interactive: true });
-				lyr.group.addLayer(overlay);
-				var iObj = Object.assign({}, obj, { leafletObj: overlay });
-				overlay.on('click', function (ev) { L.DomEvent.stopPropagation(ev); selectObject(iObj); });
+				var ll = L.latLng(obj.latlng[0], obj.latlng[1]);
+				var sc = obj.scale || 200;
+				var nw = obj.naturalW || 800;
+				var nh = obj.naturalH || 600;
+				var iObj = createImageMarker(obj.url, nw, nh, ll, sc, layerId);
+				iObj.id = obj.id;
+				iObj.layerId = layerId;
+				iObj.localOpacity = obj.localOpacity !== undefined ? obj.localOpacity : 100;
+				iObj.opacity = obj.opacity || 0.9;
+				lyr.group.addLayer(iObj.leafletObj);
 				lyr.objects.push(iObj);
 			}
+
 		}
 
 		// ═══════════════════════════════════════════════════════════
