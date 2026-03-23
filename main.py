@@ -23,7 +23,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QIcon, QColor, QKeySequence, QShortcut, QFont
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineProfile
 from PyQt6.QtWebChannel import QWebChannel
 
 from bridge import Bridge
@@ -505,7 +505,17 @@ class MainWindow(QMainWindow):
 				return panel
 
 		def _build_webview(self):
+				cache_path = os.path.join(os.path.dirname(__file__), "cache", "tiles")
+				os.makedirs(cache_path, exist_ok=True)
+				profile = QWebEngineProfile("vov_editor_tiles", self)
+				profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
+				profile.setCachePath(cache_path)
+				profile.setHttpCacheMaximumSize(300 * 1024 * 1024)  # 300 MB
+
 				self.webview = QWebEngineView()
+				page = QWebEnginePage(profile, self.webview)
+				self.webview.setPage(page)
+
 				settings = self.webview.settings()
 				settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
 				settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
