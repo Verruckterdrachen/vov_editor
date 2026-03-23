@@ -18,29 +18,6 @@
 
 ---
 
-### BUG-15 — Undo не восстанавливает позицию текста после перетаскивания
-**Статус**: ❌ Не исправлен  
-**Описание**: Если перетащить текстовый маркер, а затем нажать Ctrl+Z —
-маркер не возвращается на исходную позицию.  
-**Root cause**: В `marker.on('dragend')` обновляется `obj.latlng`, но `pushHistory`
-не вызывается. История умеет только `add`/`delete`, нет типа `move`.  
-**Механизм фикса**: В `dragstart` сохранять `oldLatLng`, в `dragend` пушить
-`{ action: 'move', obj, oldLatLng, newLatLng }`. В `undoAction` обрабатывать `move`:
-`obj.leafletObj.setLatLng(oldLatLng); obj.latlng = [oldLatLng.lat, oldLatLng.lng]`.
-
----
-
-### BUG-16 — Undo не работает для редактирования текста (цвет, размер, начертание)
-**Статус**: ❌ Не исправлен  
-**Описание**: После `applyTextEdit` (двойной клик → диалог) нажатие Ctrl+Z
-не отменяет изменения текста, размера шрифта, цвета, жирности/курсива.  
-**Root cause**: В `applyTextEdit` нет вызова `pushHistory`. Нужен тип `editText`.  
-**Механизм фикса**: Перед применением сохранять старые значения в `pushHistory({
-action: 'editText', obj, oldText, oldFontSize, oldFontColor, oldFontBold, oldFontItalic })`.
-В `undoAction` обрабатывать `editText`: восстанавливать поля объекта и обновлять иконку.
-
----
-
 ### TASK-12 — Множественное выделение объектов
 **Статус**: ❌ Не реализован  
 **Описание**: Нет возможности выделить несколько объектов сразу для групповых операций (удаление и др.).  
@@ -64,6 +41,8 @@ action: 'editText', obj, oldText, oldFontSize, oldFontColor, oldFontBold, oldFon
 
 | ID | Описание | Коммит |
 |---|---|---|
+| BUG-15 | Undo после drag текста — pushHistory action:'move' в dragend | fix(BUG-15,BUG-16) |
+| BUG-16 | Undo после редактирования текста — pushHistory action:'editText' в applyTextEdit | fix(BUG-15,BUG-16) |
 | BUG-13 | Тёмные тайлы — фон #1a1a2e → #e8e0d8, zoomSnap 0.5, масштабная линейка | fix(BUG-13/map-ux) |
 | TASK-11 | Дисковый кэш тайлов через QWebEngineProfile (300 MB) | fix(BUG-13/map-ux) |
 | BUG-11 | `dataChanged` invalid index — highlight откладывается после полной сборки дерева | fix(BUG-11) |

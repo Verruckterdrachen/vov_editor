@@ -779,11 +779,14 @@
 
 			marker.on('dragstart', function () {
 				if (marker._icon) marker._icon.style.cursor = 'grabbing';
-				selectObject(obj);  // ← добавить
+				obj._dragStartLatLng = marker.getLatLng();
+				selectObject(obj);
 			});
 			marker.on('dragend', function (ev) {
 				var ll = ev.target.getLatLng();
+				var oldLatLng = obj._dragStartLatLng;
 				obj.latlng = [ll.lat, ll.lng];
+				pushHistory({ action: 'move', obj: obj, oldLatLng: oldLatLng, newLatLng: ll });
 				if (marker._icon) marker._icon.style.cursor = '';
 				log('Text dragged to ' + ll.lat.toFixed(4) + ',' + ll.lng.toFixed(4));
 			});
@@ -830,6 +833,11 @@
 			});
 			if (!obj) { log('[applyTextEdit] ERROR: obj not found id=' + id); return; }
 			log('[applyTextEdit] found obj id=' + id + ' in layer=' + foundInLayer + ' old_text="' + obj.text + '" -> new_text="' + text + '"');
+			pushHistory({
+				action: 'editText', obj: obj,
+				oldText: obj.text, oldFontSize: obj.fontSize,
+				oldFontColor: obj.fontColor, oldFontBold: obj.fontBold, oldFontItalic: obj.fontItalic
+			});
 			obj.text = text;
 			obj.fontSize = fSize;
 			obj.fontColor = fColor;
@@ -975,6 +983,19 @@
 					layers[obj.layerId].group.removeLayer(obj.leafletObj);
 					layers[obj.layerId].objects = layers[obj.layerId].objects.filter(function (o) { return o !== obj; });
 				}
+			} else if (rec.action === 'move') {
+				var obj = rec.obj;
+				obj.leafletObj.setLatLng(rec.oldLatLng);
+				obj.latlng = [rec.oldLatLng.lat, rec.oldLatLng.lng];
+			} else if (rec.action === 'editText') {
+				var obj = rec.obj;
+				obj.text = rec.oldText;
+				obj.fontSize = rec.oldFontSize;
+				obj.fontColor = rec.oldFontColor;
+				obj.fontBold = rec.oldFontBold;
+				obj.fontItalic = rec.oldFontItalic;
+				var icon = buildTextIcon(obj.text, obj.fontSize, obj.fontColor, obj.fontBold, obj.fontItalic);
+				obj.leafletObj.setIcon(icon);
 			} else if (rec.action === 'delete') {
 				var obj = rec.obj;
 				if (layers[obj.layerId] && obj.leafletObj) {
@@ -1098,10 +1119,14 @@
 				var rObj = Object.assign({}, obj, { leafletObj: marker });
 				marker.on('dragstart', function () {
 					if (marker._icon) marker._icon.style.cursor = 'grabbing';
-					selectObject(rObj);  // ← rObj (не obj!) — это правильная ссылка в restoreObject
+					rObj._dragStartLatLng = marker.getLatLng();
+					selectObject(rObj);
 				});
 				marker.on('dragend', function (ev) {
-					var ll2 = ev.target.getLatLng(); rObj.latlng = [ll2.lat, ll2.lng];
+					var ll2 = ev.target.getLatLng();
+					var oldLatLng = rObj._dragStartLatLng;
+					rObj.latlng = [ll2.lat, ll2.lng];
+					pushHistory({ action: 'move', obj: rObj, oldLatLng: oldLatLng, newLatLng: ll2 });
 					if (marker._icon) marker._icon.style.cursor = '';
 				});
 				marker.on('click', function (ev) { L.DomEvent.stopPropagation(ev); selectObject(rObj); });
