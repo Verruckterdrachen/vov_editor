@@ -37,6 +37,17 @@
 			background: rgba(255, 100, 100, 0.15);
 		}
 
+		#brush-cursor {
+			position: fixed;
+			border: 2px solid rgba(0, 0, 0, 0.7);
+			border-radius: 50%;
+			pointer-events: none;
+			display: none;
+			transform: translate(-50%, -50%);
+			z-index: 9999;
+			background: transparent;
+		}
+
 		/* FIX лог: pointer-events:auto + user-select:text — текст можно выделить и скопировать */
 		#debug-log {
 			position: fixed;
@@ -148,6 +159,10 @@
 			display: none !important;
 		}
 
+		body.exporting #brush-cursor {
+			display: none !important;
+		}
+
 		/* Пробел-drag: временный курсор */
 		body.space-pan #map {
 			cursor: grab !important;
@@ -163,6 +178,7 @@
 
 	<div id="map"></div>
 	<div id="eraser-cursor"></div>
+	<div id="brush-cursor"></div>
 	<div id="debug-log"></div>
 	<button id="debug-copy-btn" title="Копировать лог">📋 Копировать</button>
 
@@ -262,6 +278,7 @@
 		var isErasing = false;
 		var eraserPath = [];
 		var eraserCursorEl = document.getElementById('eraser-cursor');
+		var brushCursorEl = document.getElementById('brush-cursor');
 
 		var tileLayer = null;
 		var currentTileType = 'map';
@@ -462,6 +479,8 @@
 		// ═══════════════════════════════════════════════════════════
 		function setTool(params) {
 			activeTool = params.tool;
+			if (activeTool !== 'brush') brushCursorEl.style.display = 'none';
+			if (activeTool !== 'eraser') eraserCursorEl.style.display = 'none';
 			if (params.color) brushColor = params.color;
 			if (params.size) brushSize = params.size;
 			if (params.eraserSize) eraserSize = params.eraserSize;
@@ -480,8 +499,13 @@
 				eraserCursorEl.style.display = 'none';
 			} else if (activeTool === 'brush' || activeTool === 'eraser') {
 				map.dragging.disable();
-				if (activeTool === 'eraser') updateEraserCursor();
-				else eraserCursorEl.style.display = 'none';
+				if (activeTool === 'eraser') {
+					updateEraserCursor();
+					brushCursorEl.style.display = 'none';
+				} else {
+					updateBrushCursor();
+					eraserCursorEl.style.display = 'none';
+				}
 			}
 
 			if (activeTool !== 'select') deselectAll();
@@ -489,7 +513,11 @@
 		}
 
 		function setBrushColor(c) { brushColor = c; log('Brush color: ' + c); }
-		function setBrushSize(s) { brushSize = s; log('Brush size: ' + s); }
+		function setBrushSize(s) {
+			brushSize = s;
+			updateBrushCursor();
+			log('Brush size: ' + s);
+		}
 		function setEraserSize(s) { eraserSize = s; updateEraserCursor(); log('Eraser size: ' + s); }
 		function setFontSize(s) { fontSize = s; log('Font size: ' + s); }
 		function setFontColor(c) { fontColor = c; log('Font color: ' + c); }
@@ -500,6 +528,11 @@
 			var px = eraserSize * 2;
 			eraserCursorEl.style.width = px + 'px';
 			eraserCursorEl.style.height = px + 'px';
+		}
+		function updateBrushCursor() {
+			var px = brushSize * 2;
+			brushCursorEl.style.width = px + 'px';
+			brushCursorEl.style.height = px + 'px';
 		}
 
 		// ═══════════════════════════════════════════════════════════
@@ -521,7 +554,13 @@
 				eraserCursorEl.style.display = 'block';
 				if (isErasing) eraserPath.push(e.latlng);
 			}
-			if (activeTool === 'brush' && isDrawing && !spaceDown) continueDrawing(e.latlng);
+			if (activeTool === 'brush' && !spaceDown) {
+				var cp = e.containerPoint;
+				brushCursorEl.style.left = cp.x + 'px';
+				brushCursorEl.style.top = cp.y + 'px';
+				brushCursorEl.style.display = 'block';
+				if (isDrawing) continueDrawing(e.latlng);
+			}
 		}
 		function onMapMouseUp(e) {
 			if (activeTool === 'brush' && isDrawing) finishDrawing();
@@ -1242,7 +1281,10 @@
 			setTool({ tool: activeTool }); // восстанавливаем курсор инструмента
 		}
 
-		document.addEventListener('mouseleave', function () { eraserCursorEl.style.display = 'none'; });
+		document.addEventListener('mouseleave', function () {
+			eraserCursorEl.style.display = 'none';
+			brushCursorEl.style.display = 'none';
+		});
 	</script>
 </body>
 
