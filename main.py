@@ -383,6 +383,7 @@ class MainWindow(QMainWindow):
 				self._export_path          = None
 				self._selected_obj_id      = None  # FIX BUG-10: инициализация
 
+				self._selected_obj_ids = set()  
 				self._setup_ui()
 				self._setup_shortcuts()
 
@@ -730,10 +731,29 @@ class MainWindow(QMainWindow):
 						if not item.is_group and not item.object_type:
 								self._activate_layer(item)
 						elif item.object_type:
-								self._js(f'selectObjectById("{item.layer_id}")')
-								self._clear_highlight(self.layer_tree.invisibleRootItem())
-								item.setBackground(0, QColor("#1a5276"))
-								item.setBackground(1, QColor("#1a5276"))
+								modifiers = QApplication.keyboardModifiers()
+								shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+								self._js_log(f"[CLICK] item={item.layer_id} shift={shift} selected_ids={list(self._selected_obj_ids)}")
+								if modifiers & Qt.KeyboardModifier.ShiftModifier:
+										# Shift+клик — добавляем/убираем из множества
+										if item.layer_id in self._selected_obj_ids:
+												self._selected_obj_ids.discard(item.layer_id)
+												item.setBackground(0, QColor("transparent"))
+												item.setBackground(1, QColor("transparent"))
+										else:
+												self._selected_obj_ids.add(item.layer_id)
+												item.setBackground(0, QColor("#1a5276"))
+												item.setBackground(1, QColor("#1a5276"))
+								else:
+										# Обычный клик — сбрасываем множество, одиночное выделение
+										self._selected_obj_ids.clear()
+										self._selected_obj_ids.add(item.layer_id)
+										self._selected_obj_id = item.layer_id
+										self._js(f'selectObjectById("{item.layer_id}")')
+										self._clear_highlight(self.layer_tree.invisibleRootItem())
+										item.setBackground(0, QColor("#1a5276"))
+										item.setBackground(1, QColor("#1a5276"))
+										self._tree_highlight_managed = True
 						self._sync_opacity_slider(item)
 
 
@@ -1013,12 +1033,16 @@ class MainWindow(QMainWindow):
 				self._js_log("Undo requested")
 
 		def _delete_selected(self):
-				# Сначала проверяем — выделен ли слой/группа в дереве
 				item = self.layer_tree.currentItem()
 				if isinstance(item, LayerItem) and not item.object_type:
 						self._delete_layer()
 						return
-				# Иначе — удаляем выбранный объект на карте
+				if self._selected_obj_ids:
+						ids = json.dumps(list(self._selected_obj_ids))
+						self._js(f"deleteSelected({ids});")
+						self._js_log(f"Delete multi: {len(self._selected_obj_ids)} objects")
+						self._selected_obj_ids.clear()
+						return
 				if not self._selected_obj_id:
 						self._js_log("Delete: nothing selected")
 						return
@@ -1026,6 +1050,7 @@ class MainWindow(QMainWindow):
 				self._js(f"deleteSelected({obj_id});")
 				self._selected_obj_id = None
 				self._js_log("Delete selected requested")
+
 
 		def _ask_api_key(self):
 				dlg = ApiKeyDialog(self, self.config.get("yandex_api_key", ""))
@@ -1169,10 +1194,25 @@ class MainWindow(QMainWindow):
 				# FIX BUG-10: исправлен отступ (были пробелы вместо табов — блок не выполнялся)
 				if msg.startswith("__SELECTED__:"):
 						self._selected_obj_id = msg[len("__SELECTED__:"):] or None
-						self._highlight_tree_item(self._selected_obj_id)
+						self._selected_obj_ids.clear()
+						if self._selected_obj_id:
+								self._selected_obj_ids.add(self._selected_obj_id)
+						if not getattr(self, '_tree_highlight_managed', False):
+								self._clear_highlight(self.layer_tree.invisibleRootItem())
+								self._highlight_tree_item(self._selected_obj_id)
+						self._tree_highlight_managed = False  # сбросить флаг
 						current = self.layer_tree.currentItem()
 						if current:
 								self._sync_opacity_slider(current)
+						return
+				if msg.startswith("__SELECTED_ADD__:"):
+						obj_id = msg[len("__SELECTED_ADD__:"):] or None
+						self._js_log(f"[SELECTED_ADD] obj_id={obj_id} before ids={list(self._selected_obj_ids)}")
+						if obj_id:
+								self._selected_obj_ids.add(obj_id)
+								self._selected_obj_id = obj_id
+								self._highlight_tree_item(obj_id)
+						self._js_log(f"[SELECTED_ADD] after ids={list(self._selected_obj_ids)}")
 						return
 
 				self.status_lbl.setText(msg)

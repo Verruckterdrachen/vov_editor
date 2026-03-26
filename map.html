@@ -834,7 +834,10 @@
 			});
 			marker.on('click', function (ev) {
 				L.DomEvent.stopPropagation(ev);
-				if (activeTool === 'select') selectObject(obj);
+				if (activeTool === 'select') {
+					window._lastShift = ev.originalEvent && ev.originalEvent.shiftKey;
+					selectObject(obj);
+				}
 			});
 			marker.on('dblclick', function (ev) {
 				L.DomEvent.stopPropagation(ev);
@@ -1078,13 +1081,18 @@
 			leafletObj.on('click', function (ev) {
 				if (activeTool !== 'select') return;
 				L.DomEvent.stopPropagation(ev);
+				window._lastShift = ev.originalEvent && ev.originalEvent.shiftKey;
 				if (!layers[layerId]) return;
 				var found = layers[layerId].objects.filter(function (o) { return o.leafletObj === leafletObj; })[0];
 				if (found) selectObject(found);
 			});
+
 		}
 		function selectObject(obj) {
-			deselectAll();
+			log('[selectObject] id=' + obj.id + ' shift=' + (window._lastShift || false));
+			if (!window._lastShift) {
+				deselectAll();
+			}
 			selectedObj = obj;
 			if (obj.leafletObj) {
 				if (obj.leafletObj.setStyle) obj.leafletObj.setStyle({ color: '#00aaff', weight: (obj.weight || 4) + 2 });
@@ -1099,7 +1107,7 @@
 			}
 			log('Selected: ' + obj.type + ' id=' + obj.id);
 			// Сообщаем Python id выбранного объекта
-			if (bridge) bridge.onStatus('__SELECTED__:' + obj.id);
+			if (bridge) bridge.onStatus('__SELECTED__' + (window._lastShift ? '_ADD' : '') + ':' + obj.id);
 			notifyStatus('Объект выбран: ' + obj.type);
 		}
 		function deselectAll() {
@@ -1129,6 +1137,31 @@
 		}
 		function deleteSelected(forceId) {
 			try {
+				// Массив id — мультиудаление без sendLayersToQt внутри цикла
+				if (Array.isArray(forceId)) {
+					forceId.forEach(function (id) {
+						var obj = null;
+						Object.keys(layers).forEach(function (lid) {
+							layers[lid].objects.forEach(function (o) {
+								if (o.id === id) obj = o;
+							});
+						});
+						if (!obj) { log('[deleteSelected] id not found: ' + id); return; }
+						var lid = obj.layerId;
+						if (layers[lid] && layers[lid].group) {
+							layers[lid].group.removeLayer(obj.leafletObj);
+							layers[lid].objects = layers[lid].objects.filter(function (o) { return o !== obj; });
+						}
+						pushHistory({ action: 'delete', obj: obj });
+						if (selectedObj === obj) selectedObj = null;
+						log('[deleteSelected] removed ' + obj.type + ' id=' + obj.id);
+					});
+					sendLayersToQt();
+					notifyStatus('Объектов удалено: ' + forceId.length);
+					return;
+				}
+
+				// Одиночное удаление — старый код без изменений
 				var obj = selectedObj;
 				if (!obj && forceId) {
 					Object.keys(layers).forEach(function (lid) {
@@ -1335,7 +1368,11 @@
 					pushHistory({ action: 'move', obj: rObj, oldLatLng: oldLatLng, newLatLng: ll2 });
 					if (marker._icon) marker._icon.style.cursor = '';
 				});
-				marker.on('click', function (ev) { L.DomEvent.stopPropagation(ev); selectObject(rObj); });
+				marker.on('click', function (ev) {
+					L.DomEvent.stopPropagation(ev);
+					window._lastShift = ev.originalEvent && ev.originalEvent.shiftKey;
+					selectObject(rObj);
+				});
 				marker.on('dblclick', function (ev) {
 					L.DomEvent.stopPropagation(ev);
 					openTextEditDialog(rObj, marker);
@@ -1523,6 +1560,10 @@
 			eraserCursorEl.style.display = 'none';
 			brushCursorEl.style.display = 'none';
 		});
+
+		document.addEventListener('keydown', function (e) { window._lastShift = e.shiftKey; });
+		document.addEventListener('keyup', function (e) { window._lastShift = e.shiftKey; });
+
 	</script>
 </body>
 
