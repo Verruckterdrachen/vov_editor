@@ -947,19 +947,41 @@ class MainWindow(QMainWindow):
 				save_config(self.config)
 				self._load_project_from_path(path)
 
+		EXPORT_PAD = 500  # отступ в px по каждой стороне при экспорте
+
 		def _export_png(self):
 				path, _ = QFileDialog.getSaveFileName(
-						self, "Экспорт PNG", "export.png", "PNG (*.png)"
+								self, "Экспорт PNG", "export.png", "PNG (*.png)"
 				)
 				if not path:
-						return
+								return
 				self._export_path = path
 				self.status_lbl.setText("Подготовка экспорта...")
 				self._js_log(f"Export PNG started: {os.path.basename(path)}")
 				self._js("hideMapUI();")
 				QTimer.singleShot(150, self._do_grab)
 
+
 		def _do_grab(self):
+				PAD = 500
+				self._export_orig_win_size = self.size()
+				new_w = self._export_orig_win_size.width()  + PAD * 2
+				new_h = self._export_orig_win_size.height() + PAD * 2
+
+				# Запоминаем центр карты
+				self._js(
+						"window.__exportCenter = map.getCenter();"
+						"window.__exportZoom = map.getZoom();"
+				)
+				# Растягиваем ВСЕГО окна — layout сам распределит пространство
+				self.resize(new_w, new_h)
+				self._js(
+						"map.invalidateSize({animate:false});"
+						"map.setView(window.__exportCenter, window.__exportZoom, {animate:false});"
+				)
+				QTimer.singleShot(600, self._do_grab_finish)
+
+		def _do_grab_finish(self):
 				path = self._export_path
 				try:
 						pixmap = self.webview.grab()
@@ -970,13 +992,21 @@ class MainWindow(QMainWindow):
 								self._js_log(f"Export PNG saved OK: {path}")
 						else:
 								self.status_lbl.setText("Ошибка сохранения PNG")
-								self._js_log(f"Export PNG FAILED: pixmap.save() returned False")
+								self._js_log("Export PNG FAILED: pixmap.save() returned False")
 				except Exception as e:
 						self.status_lbl.setText(f"Ошибка экспорта: {e}")
 						self._js_log(f"Export PNG ERROR: {e}")
 				finally:
+						# Восстанавливаем размер окна — все панели живы, layout управляет всем
+						self.resize(self._export_orig_win_size)
+						self._js(
+								"map.invalidateSize({animate:false});"
+								"map.setView(window.__exportCenter, window.__exportZoom, {animate:false});"
+						)
 						self._js("showMapUI();")
 						self._export_path = None
+
+
 
 		def _undo(self):
 				self._js("undoAction();")
@@ -1196,7 +1226,7 @@ if __name__ == "__main__":
 		app.processEvents()
 
 		# Подстраховка: закрыть через 15 сек если __MAP_READY__ не пришёл
-		QTimer.singleShot(15000, lambda: (
+		QTimer.singleShot(2500, lambda: (
 				overlay.finish() or setattr(win, '_splash', None)
 				if win._splash else None
 		))
