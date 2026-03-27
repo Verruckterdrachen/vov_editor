@@ -714,6 +714,9 @@
 
 			var targetLayerIds = allLayers ? Object.keys(layers) : [activeLayerId];
 
+			var allRemoved = [];
+			var allAdded = [];
+
 			targetLayerIds.forEach(function (lid) {
 				if (!layers[lid] || !layers[lid].group) return;
 				var toRemove = [];
@@ -772,11 +775,21 @@
 
 				toRemove.forEach(function (o) { layers[lid].objects = layers[lid].objects.filter(function (x) { return x !== o; }); });
 				toAdd.forEach(function (o) { layers[lid].objects.push(o); });
+				// накапливаем diff для undo
+				toRemove.forEach(function (o) { allRemoved.push(o); });
+				toAdd.forEach(function (o) { allAdded.push(o); });
 			});
 
+			if (allRemoved.length > 0 || allAdded.length > 0) {
+				pushHistory({ action: 'erase', removed: allRemoved, added: allAdded });
+			}
 			// FIX #2: синхронизировать панель слоёв после ластика
 			sendLayersToQt();
 			notifyStatus('Ластик применён');
+		}
+
+		if (allRemoved.length > 0 || allAdded.length > 0) {
+			pushHistory({ action: 'erase', removed: allRemoved, added: allAdded });
 		}
 
 		// ═══════════════════════════════════════════════════════════
@@ -1205,8 +1218,21 @@
 		function undoAction() {
 			if (undoHistory.length === 0) { notifyStatus('Нечего отменять'); log('Undo: history empty'); return; }
 			var rec = undoHistory.pop();
-			log('Undo: ' + rec.action + ' ' + rec.obj.type);
-			if (rec.action === 'add') {
+			log('Undo: ' + rec.action + (rec.obj ? ' ' + rec.obj.type : ''));
+			if (rec.action === 'erase') {
+				rec.added.forEach(function (obj) {
+					if (layers[obj.layerId] && layers[obj.layerId].group) {
+						layers[obj.layerId].group.removeLayer(obj.leafletObj);
+						layers[obj.layerId].objects = layers[obj.layerId].objects.filter(function (o) { return o !== obj; });
+					}
+				});
+				rec.removed.forEach(function (obj) {
+					if (layers[obj.layerId] && obj.leafletObj) {
+						layers[obj.layerId].group.addLayer(obj.leafletObj);
+						layers[obj.layerId].objects.push(obj);
+					}
+				});
+			} else if (rec.action === 'add') {
 				var obj = rec.obj;
 				if (layers[obj.layerId]) {
 					layers[obj.layerId].group.removeLayer(obj.leafletObj);
@@ -1233,6 +1259,21 @@
 					layers[obj.layerId].group.addLayer(obj.leafletObj);
 					layers[obj.layerId].objects.push(obj);
 				}
+			} else if (rec.action === 'erase') {
+				// Убираем добавленные (нарезанные) сегменты
+				rec.added.forEach(function (obj) {
+					if (layers[obj.layerId] && layers[obj.layerId].group) {
+						layers[obj.layerId].group.removeLayer(obj.leafletObj);
+						layers[obj.layerId].objects = layers[obj.layerId].objects.filter(function (o) { return o !== obj; });
+					}
+				});
+				// Восстанавливаем удалённые оригиналы
+				rec.removed.forEach(function (obj) {
+					if (layers[obj.layerId] && obj.leafletObj) {
+						layers[obj.layerId].group.addLayer(obj.leafletObj);
+						layers[obj.layerId].objects.push(obj);
+					}
+				});
 			}
 			// FIX #2: синхронизировать панель слоёв после undo
 			sendLayersToQt();
