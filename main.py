@@ -1115,13 +1115,29 @@ class MainWindow(QMainWindow):
 						self._js_log(f"receive_layers CALLED, json len={len(layers_json)}")
 						layers = json.loads(layers_json)
 						active_id = self._active_layer_id
+
+						# ← Сохраняем expanded-состояние всех узлов перед clear()
+						expanded_ids = set()
+						def _collect_expanded(item):
+								if isinstance(item, LayerItem) and item.isExpanded():
+										expanded_ids.add(item.layer_id)
+								for i in range(item.childCount()):
+										_collect_expanded(item.child(i))
+						_collect_expanded(self.layer_tree.invisibleRootItem())
+
 						self.layer_tree.clear()
 
-						# ← БЫЛО: большой for с if node.get("isGroup") внутри
-						# ← СТАЛО: рекурсивный билдер
 						for node in layers:
 								top_item = self._build_tree_item(node, active_id)
 								self.layer_tree.addTopLevelItem(top_item)
+
+						# ← Восстанавливаем expanded-состояние
+						def _restore_expanded(item):
+								if isinstance(item, LayerItem) and item.layer_id in expanded_ids:
+										item.setExpanded(True)
+								for i in range(item.childCount()):
+										_restore_expanded(item.child(i))
+						_restore_expanded(self.layer_tree.invisibleRootItem())
 
 						total_objects = sum(
 								sum(len(lyr.get("objects", [])) for lyr in node.get("children", []))
