@@ -678,7 +678,7 @@
 			if (currentPath.length > 0) {
 				var last = currentPath[currentPath.length - 1];
 				var dist = map.distance(latlng, last);
-				var minDist = (156543 / Math.pow(2, map.getZoom())) * 4; // 4 пикселя в метрах
+				var minDist = (156543 / Math.pow(2, map.getZoom())) * 2; // 4 пикселя в метрах
 				if (dist < minDist) return; // слишком близко — пропускаем
 			}
 			currentPath.push(latlng);
@@ -758,9 +758,6 @@
 			var iterations = simplified.length > 80 ? 2 : 3;
 			var smoothed = chaikinSmooth(simplified, iterations);
 			currentPolyline.setLatLngs(smoothed);
-			currentPolyline.options.smoothFactor = 1.5;
-
-			currentPolyline.setLatLngs(simplified);
 			currentPolyline.options.smoothFactor = 1.5;
 
 			var obj = {
