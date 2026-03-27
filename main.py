@@ -503,6 +503,7 @@ class MainWindow(QMainWindow):
 				""")
 				lay.addWidget(self.layer_tree)
 				self.layer_tree.setItemDelegate(EyeColumnDelegate(self.layer_tree))
+				self.layer_tree.mousePressEvent = self._tree_mouse_press
 				return panel
 
 		def _build_webview(self):
@@ -678,14 +679,30 @@ class MainWindow(QMainWindow):
 				self.status_lbl.setText(f"Инструмент: {tool}")
 				self._js_log(f"Tool selected: {tool}")
 
+		def _tree_mouse_press(self, event):
+				item = self.layer_tree.itemAt(event.pos())
+				if item is None:
+						self.layer_tree.clearSelection()
+						self.layer_tree.setCurrentItem(None)
+				from PyQt6.QtWidgets import QTreeWidget
+				QTreeWidget.mousePressEvent(self.layer_tree, event)
+
 		def _add_group(self):
 				name, ok = QInputDialog.getText(self, "Новая группа", "Название группы:")
 				if not ok or not name: return
 				lid = f"group_{uuid.uuid4().hex[:8]}"
-				# FIX BUG-11: не строим дерево вручную — JS является источником правды
-				self._js(f'addLayerGroup("{lid}", {json.dumps(name)});')
+				selected = self.layer_tree.currentItem()
+				parent_id = ""
+				# parentId только если пользователь явно кликнул на группу
+				# (не на слой, не на объект)
+				if (selected
+								and isinstance(selected, LayerItem)
+								and selected.is_group
+								and selected.isSelected()):  # ← ключевая проверка
+						parent_id = selected.layer_id
+				self._js(f'addLayerGroup("{lid}", {json.dumps(name)}, "{parent_id}");')
 				self._js("sendLayersToQt();")
-				self._js_log(f"Group added: '{name}' id={lid}")
+				self._js_log(f"Group added: '{name}' id={lid} parent={parent_id}")
 
 		def _add_layer(self):
 				name, ok = QInputDialog.getText(self, "Новый слой", "Название слоя:")
@@ -693,7 +710,7 @@ class MainWindow(QMainWindow):
 				lid = f"layer_{uuid.uuid4().hex[:8]}"
 				selected = self.layer_tree.currentItem()
 				parent_id = ""
-				if selected and isinstance(selected, LayerItem) and selected.is_group:
+				if selected and isinstance(selected, LayerItem) and selected.is_group and selected.isSelected():
 						parent_id = selected.layer_id
 				# FIX BUG-11: не строим дерево вручную — JS является источником правды
 				self._js(f'addLayer("{lid}", {json.dumps(name)}, "{parent_id}");')
@@ -1074,6 +1091,25 @@ class MainWindow(QMainWindow):
 							return True
 			return super().eventFilter(obj, event)
 
+		def _build_tree_item(self, node: dict, active_id: str):
+			if node.get("isGroup"):
+					item = LayerItem(node["id"], "📁 " + node["name"], is_group=True)
+					item.visible = node.get("visible", True)
+					item.opacity = node.get("localOpacity", 100)
+					item._update_icon()
+					for child in node.get("children", []):
+							item.addChild(self._build_tree_item(child, active_id))
+					item.setExpanded(True)
+			else:
+					item = LayerItem(node["id"], node["name"])
+					item.visible = node.get("visible", True)
+					item.opacity = node.get("localOpacity", 100)
+					item._update_icon()
+					self._add_object_items(item, node.get("objects", []))
+					if node["id"] == active_id:
+							self._activate_layer(item, silent=True)
+			return item
+
 		def receive_layers(self, layers_json: str):
 				try:
 						self._js_log(f"receive_layers CALLED, json len={len(layers_json)}")
@@ -1081,32 +1117,11 @@ class MainWindow(QMainWindow):
 						active_id = self._active_layer_id
 						self.layer_tree.clear()
 
+						# ← БЫЛО: большой for с if node.get("isGroup") внутри
+						# ← СТАЛО: рекурсивный билдер
 						for node in layers:
-								if node.get("isGroup"):
-										g_item = LayerItem(node["id"], "📁 " + node["name"], is_group=True)
-										g_item.visible = node.get("visible", True)
-										g_item.opacity = node.get("localOpacity", 100)
-										g_item._update_icon()
-										self.layer_tree.addTopLevelItem(g_item)
-										for lyr in node.get("children", []):
-												l_item = LayerItem(lyr["id"], lyr["name"])
-												l_item.visible = lyr.get("visible", True)
-												l_item.opacity = lyr.get("localOpacity", 100)
-												l_item._update_icon()
-												g_item.addChild(l_item)
-												self._add_object_items(l_item, lyr.get("objects", []))
-												if lyr["id"] == active_id:
-														self._activate_layer(l_item, silent=True)
-										g_item.setExpanded(True)
-								else:
-										l_item = LayerItem(node["id"], node["name"])
-										l_item.visible = node.get("visible", True)
-										l_item.opacity = node.get("localOpacity", 100)   # ← добавить!
-										l_item._update_icon()
-										self.layer_tree.addTopLevelItem(l_item)
-										self._add_object_items(l_item, node.get("objects", []))
-										if node["id"] == active_id:
-												self._activate_layer(l_item, silent=True)
+								top_item = self._build_tree_item(node, active_id)
+								self.layer_tree.addTopLevelItem(top_item)
 
 						total_objects = sum(
 								sum(len(lyr.get("objects", [])) for lyr in node.get("children", []))
@@ -1117,7 +1132,6 @@ class MainWindow(QMainWindow):
 								f"receive_layers OK: {len(layers)} top-level nodes, "
 								f"{total_objects} total objects"
 						)
-						# Восстанавливаем highlight активного слоя после полной сборки дерева
 						if active_id:
 								def find_and_highlight(item):
 										if isinstance(item, LayerItem) and item.layer_id == active_id and not item.object_type:

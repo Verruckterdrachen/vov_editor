@@ -491,14 +491,18 @@
 			layerOrder.push(id);
 			log('Layer created: ' + name + ' id=' + id);
 		}
-		function addLayerGroup(id, name) {
+		function addLayerGroup(id, name, parentId) {
 			layers[id] = { name: name, visible: true, group: null, objects: [], isGroup: true };
+			if (parentId) layers[id].parentId = parentId;
 			layerOrder.push(id);
-			log('Group created: ' + name + ' id=' + id);
+			log('Group created: ' + name + ' id=' + id + (parentId ? ' parent=' + parentId : ''));
 		}
 		function addLayer(id, name, parentId) {
-			createLayer(id, name);
+			var lg = L.layerGroup().addTo(map);
+			layers[id] = { name: name, visible: true, group: lg, objects: [] };
 			if (parentId) layers[id].parentId = parentId;
+			layerOrder.push(id);
+			log('Layer created: ' + name + ' id=' + id + (parentId ? ' parent=' + parentId : ''));
 			setActiveLayer(id);
 		}
 		function removeLayer(id) {
@@ -858,9 +862,6 @@
 				toAdd.forEach(function (o) { allAdded.push(o); });
 			});
 
-			if (allRemoved.length > 0 || allAdded.length > 0) {
-				pushHistory({ action: 'erase', removed: allRemoved, added: allAdded });
-			}
 			// FIX #2: синхронизировать панель слоёв после ластика
 			sendLayersToQt();
 			notifyStatus('Ластик применён');
@@ -1367,34 +1368,29 @@
 				version: '1.0', center: [map.getCenter().lat, map.getCenter().lng],
 				zoom: map.getZoom(), tileType: currentTileType, activeLayerId: activeLayerId,
 				layers: (function () {
-					var result = [];
-					var addedIds = {};
-					layerOrder.forEach(function (lid) {
+					function serializeNode(lid) {
 						var lyr = layers[lid];
-						if (addedIds[lid]) return;
 						if (lyr.isGroup) {
-							var grpNode = { id: lid, name: lyr.name, visible: lyr.visible, isGroup: true, children: [] };
-							layerOrder.forEach(function (cid) {
-								if (layers[cid] && layers[cid].parentId === lid) {
-									grpNode.children.push({
-										id: cid, name: layers[cid].name, visible: layers[cid].visible,
-										localOpacity: layers[cid].localOpacity !== undefined ? layers[cid].localOpacity : 100,
-										objects: (layers[cid].objects || []).map(serializeObject)
-									});
-
-									addedIds[cid] = true;
-								}
-							});
-							result.push(grpNode);
-						} else if (!lyr.parentId) {
-							result.push({
+							var children = layerOrder
+								.filter(function (cid) { return layers[cid] && layers[cid].parentId === lid; })
+								.map(serializeNode);
+							return {
+								id: lid, name: lyr.name, visible: lyr.visible, isGroup: true,
+								localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100,
+								children: children
+							};
+						} else {
+							return {
 								id: lid, name: lyr.name, visible: lyr.visible, isGroup: false,
+								localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100,
 								objects: (lyr.objects || []).map(serializeObject)
-							});
+							};
 						}
-						addedIds[lid] = true;
-					});
-					return result;
+					}
+					// Только top-level узлы (без parentId)
+					return layerOrder
+						.filter(function (lid) { return layers[lid] && !layers[lid].parentId; })
+						.map(serializeNode);
 				})()
 			};
 			if (bridge) bridge.saveProjectData(JSON.stringify(data, null, 2));
@@ -1426,26 +1422,31 @@
 			layers = {}; layerOrder = []; undoHistory = [];
 			if (data.center) map.setView(data.center, data.zoom || 5);
 			if (data.tileType) changeTileLayer(data.tileType, yandexApiKey);
-			(data.layers || []).forEach(function (lyr) {
-				if (lyr.isGroup) {
-					layers[lyr.id] = { name: lyr.name, visible: lyr.visible !== false, group: null, objects: [], isGroup: true };
-					layerOrder.push(lyr.id);
-					// Восстанавливаем дочерние слои внутри группы
-					(lyr.children || []).forEach(function (child) {
-						var lg = L.layerGroup();
-						var childVisible = child.visible !== false && lyr.visible !== false;
-						if (childVisible) lg.addTo(map);
-						layers[child.id] = { name: child.name, visible: child.visible !== false, group: lg, objects: [], parentId: lyr.id, localOpacity: child.localOpacity !== undefined ? child.localOpacity : 100 };
-						layerOrder.push(child.id);
-						(child.objects || []).forEach(function (obj) { restoreObject(obj, child.id); });
-					});
+			function restoreNode(node, parentId) {
+				if (node.isGroup) {
+					layers[node.id] = {
+						name: node.name, visible: node.visible !== false,
+						group: null, objects: [], isGroup: true,
+						localOpacity: node.localOpacity !== undefined ? node.localOpacity : 100
+					};
+					if (parentId) layers[node.id].parentId = parentId;
+					layerOrder.push(node.id);
+					(node.children || []).forEach(function (child) { restoreNode(child, node.id); });
 				} else {
-					var lg = L.layerGroup(); if (lyr.visible !== false) lg.addTo(map);
-					layers[lyr.id] = { name: lyr.name, visible: lyr.visible !== false, group: lg, objects: [], localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100 };
-					layerOrder.push(lyr.id);
-					(lyr.objects || []).forEach(function (obj) { restoreObject(obj, lyr.id); });
+					var lg = L.layerGroup();
+					var parentVisible = parentId ? (layers[parentId] && layers[parentId].visible !== false) : true;
+					if (node.visible !== false && parentVisible) lg.addTo(map);
+					layers[node.id] = {
+						name: node.name, visible: node.visible !== false,
+						group: lg, objects: [],
+						localOpacity: node.localOpacity !== undefined ? node.localOpacity : 100
+					};
+					if (parentId) layers[node.id].parentId = parentId;
+					layerOrder.push(node.id);
+					(node.objects || []).forEach(function (obj) { restoreObject(obj, node.id); });
 				}
-			});
+			}
+			(data.layers || []).forEach(function (lyr) { restoreNode(lyr, null); });
 			// Применяем opacity всех слоёв после загрузки
 			Object.keys(layers).forEach(function (lid) {
 				if (!layers[lid].isGroup) {
@@ -1529,17 +1530,18 @@
 		}
 		function _doSendLayersToQt() {
 			_sendLayersTimer = null;
-			var result = [];
-			var addedIds = {};
-			var currentGroup = null;
 
-			layerOrder.forEach(function (lid) {
-				if (addedIds[lid]) return;
+			function buildNode(lid) {
 				var lyr = layers[lid];
 				if (lyr.isGroup) {
-					currentGroup = { id: lid, name: lyr.name, isGroup: true, visible: lyr.visible, localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100, children: [] };
-					result.push(currentGroup);
-					addedIds[lid] = true;
+					var children = layerOrder
+						.filter(function (cid) { return layers[cid] && layers[cid].parentId === lid; })
+						.map(buildNode);
+					return {
+						id: lid, name: lyr.name, isGroup: true, visible: lyr.visible,
+						localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100,
+						children: children
+					};
 				} else {
 					var objects = (lyr.objects || []).map(function (o) {
 						return {
@@ -1549,19 +1551,18 @@
 							localOpacity: o.localOpacity !== undefined ? o.localOpacity : 100
 						};
 					});
-					var node = { id: lid, name: lyr.name, isGroup: false, visible: lyr.visible, localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100, objects: objects };
-					if (lyr.parentId) {
-						if (currentGroup) currentGroup.children.push(node);
-						else result.push(node);
-					} else if (currentGroup && !lyr.parentId) {
-						currentGroup = null;
-						result.push(node);
-					} else {
-						result.push(node);
-					}
-					addedIds[lid] = true;
+					return {
+						id: lid, name: lyr.name, isGroup: false, visible: lyr.visible,
+						localOpacity: lyr.localOpacity !== undefined ? lyr.localOpacity : 100,
+						objects: objects
+					};
 				}
-			});
+			}
+
+			// Только top-level узлы (без parentId)
+			var result = layerOrder
+				.filter(function (lid) { return layers[lid] && !layers[lid].parentId; })
+				.map(buildNode);
 
 			var totalObjects = result.reduce(function (sum, node) {
 				if (node.isGroup) return sum + (node.children || []).reduce(function (s, c) { return s + (c.objects || []).length; }, 0);
@@ -1569,11 +1570,8 @@
 			}, 0);
 
 			log('[sendLayersToQt] sending ' + result.length + ' top-level nodes, ' + totalObjects + ' total objects');
-			try {
-				bridge.onLayersData(JSON.stringify(result));
-			} catch (e) {
-				log('[sendLayersToQt] ERROR: ' + e);
-			}
+			try { bridge.onLayersData(JSON.stringify(result)); }
+			catch (e) { log('[sendLayersToQt] ERROR: ' + e); }
 		}
 
 		function setObjectVisible(objId, visible) {
