@@ -632,6 +632,12 @@
 		}
 
 		function continueDrawing(latlng) {
+			if (currentPath.length > 0) {
+				var last = currentPath[currentPath.length - 1];
+				var dist = map.distance(latlng, last);
+				var minDist = (156543 / Math.pow(2, map.getZoom())) * 4; // 4 пикселя в метрах
+				if (dist < minDist) return; // слишком близко — пропускаем
+			}
 			currentPath.push(latlng);
 			currentPolyline.setLatLngs(currentPath);
 		}
@@ -650,6 +656,31 @@
 				return left.slice(0, -1).concat(right);
 			}
 			return [start, end];
+		}
+
+		function chaikinSmooth(points, iterations) {
+			iterations = iterations || 3;
+			var pts = points;
+			for (var iter = 0; iter < iterations; iter++) {
+				var result = [pts[0]]; // сохраняем первую точку
+				for (var i = 0; i < pts.length - 1; i++) {
+					var p0 = pts[i];
+					var p1 = pts[i + 1];
+					var q = L.latLng(
+						0.75 * p0.lat + 0.25 * p1.lat,
+						0.75 * p0.lng + 0.25 * p1.lng
+					);
+					var r = L.latLng(
+						0.25 * p0.lat + 0.75 * p1.lat,
+						0.25 * p0.lng + 0.75 * p1.lng
+					);
+					result.push(q);
+					result.push(r);
+				}
+				result.push(pts[pts.length - 1]); // сохраняем последнюю точку
+				pts = result;
+			}
+			return pts;
 		}
 
 		function perpendicularDist(pt, lineStart, lineEnd) {
@@ -677,14 +708,21 @@
 				return;
 			}
 
-			var simplified = rdpSimplify(currentPath, 0.00005);
+			var metersPerPx = 156543 / Math.pow(2, map.getZoom());
+			var toleranceM = metersPerPx * 3;
+			var toleranceDeg = toleranceM / 111320;
+			var simplified = rdpSimplify(currentPath, toleranceDeg);
+			var smoothed = chaikinSmooth(simplified, 3); // 3 итерации
+			currentPolyline.setLatLngs(smoothed);
+			currentPolyline.options.smoothFactor = 1.5;
+
 			currentPolyline.setLatLngs(simplified);
 			currentPolyline.options.smoothFactor = 1.5;
 
 			var obj = {
 				id: 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
 				type: 'polyline',
-				latlngs: simplified.map(function (ll) { return [ll.lat, ll.lng]; }),
+				latlngs: smoothed.map(function (ll) { return [ll.lat, ll.lng]; }),
 				color: brushColor,
 				weight: brushSize,
 				layerId: activeLayerId,
