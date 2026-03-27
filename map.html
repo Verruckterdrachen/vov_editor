@@ -221,6 +221,12 @@
 	<div id="map"></div>
 	<div id="eraser-cursor"></div>
 	<div id="brush-cursor"></div>
+	<div id="fps-counter" style="
+    position:fixed; top:8px; right:8px; z-index:9998;
+    background:rgba(0,0,0,0.65); color:#0f0;
+    font:12px monospace; padding:3px 8px; border-radius:4px;
+    pointer-events:none; display:none;
+	">FPS: --</div>
 	<div id="debug-log"></div>
 	<button id="debug-copy-btn" title="Копировать лог">📋 Копировать</button>
 
@@ -236,6 +242,32 @@
 		var debugEl = document.getElementById('debug-log');
 		var debugCopyBtn = document.getElementById('debug-copy-btn');
 		var debugVisible = false;
+
+		// ── FPS COUNTER (Ctrl+F — показать/скрыть) ───────────────
+		var fpsEl = document.getElementById('fps-counter');
+		var fpsVisible = false;
+		var _fpsLast = performance.now();
+		var _fpsFrames = 0;
+		function _fpsTick() {
+			_fpsFrames++;
+			var now = performance.now();
+			if (now - _fpsLast >= 500) {
+				var fps = Math.round(_fpsFrames * 1000 / (now - _fpsLast));
+				fpsEl.textContent = 'FPS: ' + fps;
+				_fpsFrames = 0;
+				_fpsLast = now;
+			}
+			requestAnimationFrame(_fpsTick);
+		}
+		requestAnimationFrame(_fpsTick);
+
+		document.addEventListener('keydown', function (e) {
+			if (e.ctrlKey && e.key === 'f') {
+				e.preventDefault();
+				fpsVisible = !fpsVisible;
+				fpsEl.style.display = fpsVisible ? 'block' : 'none';
+			}
+		});
 
 		function log(msg) {
 			var ts = new Date().toTimeString().slice(0, 8);
@@ -712,7 +744,8 @@
 			var toleranceM = metersPerPx * 3;
 			var toleranceDeg = toleranceM / 111320;
 			var simplified = rdpSimplify(currentPath, toleranceDeg);
-			var smoothed = chaikinSmooth(simplified, 3); // 3 итерации
+			var iterations = simplified.length > 80 ? 2 : 3;
+			var smoothed = chaikinSmooth(simplified, iterations);
 			currentPolyline.setLatLngs(smoothed);
 			currentPolyline.options.smoothFactor = 1.5;
 
@@ -759,9 +792,16 @@
 				if (!layers[lid] || !layers[lid].group) return;
 				var toRemove = [];
 				var toAdd = [];
+				// Вычислить bbox ластика один раз
+				var eBounds = L.latLngBounds(eraserPath).pad((eraserRadiusM / 111320) * 2);
 
 				layers[lid].objects.forEach(function (obj) {
 					if (obj.type === 'polyline') {
+						// ── BBOX FILTER: пропускаем объекты вне зоны ластика ──
+						var objBounds = L.latLngBounds(
+							obj.latlngs.map(function (ll) { return L.latLng(ll[0], ll[1]); })
+						);
+						if (!eBounds.intersects(objBounds)) return;
 						var keepSegments = [];
 						var currentSeg = [];
 						var latlngs = obj.latlngs;
@@ -1476,12 +1516,19 @@
 		// ═══════════════════════════════════════════════════════════
 		//   ДЕРЕВО СЛОЁВ
 		// ═══════════════════════════════════════════════════════════
+		// ── DEBOUNCED sendLayersToQt ──────────────────────────────
+		var _sendLayersTimer = null;
 		function sendLayersToQt() {
 			if (!bridge) {
 				log('[WARN] sendLayersToQt: bridge not ready, retry in 200ms...');
 				setTimeout(sendLayersToQt, 200);
 				return;
 			}
+			if (_sendLayersTimer) clearTimeout(_sendLayersTimer);
+			_sendLayersTimer = setTimeout(_doSendLayersToQt, 100);
+		}
+		function _doSendLayersToQt() {
+			_sendLayersTimer = null;
 			var result = [];
 			var addedIds = {};
 			var currentGroup = null;
@@ -1517,18 +1564,15 @@
 			});
 
 			var totalObjects = result.reduce(function (sum, node) {
-				if (node.isGroup) {
-					return sum + (node.children || []).reduce(function (s, c) { return s + (c.objects || []).length; }, 0);
-				}
+				if (node.isGroup) return sum + (node.children || []).reduce(function (s, c) { return s + (c.objects || []).length; }, 0);
 				return sum + (node.objects || []).length;
 			}, 0);
 
 			log('[sendLayersToQt] sending ' + result.length + ' top-level nodes, ' + totalObjects + ' total objects');
 			try {
 				bridge.onLayersData(JSON.stringify(result));
-				log('[sendLayersToQt] onLayersData call OK');
 			} catch (e) {
-				log('[sendLayersToQt] ERROR calling onLayersData: ' + e);
+				log('[sendLayersToQt] ERROR: ' + e);
 			}
 		}
 
