@@ -508,7 +508,14 @@
 		function removeLayer(id) {
 			if (!layers[id]) return;
 			var name = layers[id].name;
-			if (layers[id].group) { layers[id].group.clearLayers(); map.removeLayer(layers[id].group); }
+			// Рекурсивно удаляем всех детей перед удалением самого узла
+			layerOrder
+				.filter(function (cid) { return layers[cid] && layers[cid].parentId === id; })
+				.forEach(function (cid) { removeLayer(cid); });
+			if (layers[id] && layers[id].group) {
+				layers[id].group.clearLayers();
+				map.removeLayer(layers[id].group);
+			}
 			delete layers[id];
 			layerOrder = layerOrder.filter(function (x) { return x !== id; });
 			if (activeLayerId === id) activeLayerId = layerOrder[layerOrder.length - 1] || null;
